@@ -13,4 +13,4 @@ __pycache__/
 .env
 
 # Cannot be committed
-.mcp-servers/genesys-cloud-mcp-plus
+.mcp-servers/
