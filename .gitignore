@@ -11,3 +11,6 @@ __pycache__/
 
 # Credentials (never commit real values)
 .env
+
+# Cannot be committed
+.mcp-servers/genesys-cloud-mcp-plus
