@@ -1,0 +1,110 @@
+import argparse
+import os
+import pandas.io.sql as sqlio
+from pprint import pprint
+import asyncio
+from asyncio import WriteTransport, streams
+
+# from asyncore import write
+from ctypes.wintypes import tagPOINT
+
+# from distutils.file_util import write_file
+from importlib.resources import contents
+from logging import LogRecord, StreamHandler, config
+from datetime import date
+import PureCloudPlatformClientV2
+from PureCloudPlatformClientV2.rest import ApiException
+import math
+from concurrent.futures import ProcessPoolExecutor
+
+
+os.environ["GENESYS_CLOUD_CLIENT_ID"] = "3aeff98d-7d1f-4638-b86b-d5d50352579f"
+os.environ["GENESYS_CLOUD_CLIENT_SECRET"] = (
+    "v8GL8uqwTg8SXfTIB6oEUyBR_Oe6K4CTaUdVyiKDQa8"
+)
+os.environ["GENESYS_CLOUD_REGION"] = "us_east_1"  # eg. us_east_1
+CLIENT_ID = os.environ["GENESYS_CLOUD_CLIENT_ID"]
+CLIENT_SECRET = os.environ["GENESYS_CLOUD_CLIENT_SECRET"]
+ORG_REGION = os.environ["GENESYS_CLOUD_REGION"]  # eg. us_east_1
+apiclient = (
+    PureCloudPlatformClientV2.api_client.ApiClient().get_client_credentials_token(
+        CLIENT_ID, CLIENT_SECRET
+    )
+)
+
+
+def getallschedulegroups():
+    schedulegroupids = []
+    # create an instance of the API class
+    api_instance = PureCloudPlatformClientV2.ArchitectApi(apiclient)
+    page_number = 1  # int | Page number (optional) (default to 1)
+    page_size = 100  # int | Page size (optional) (default to 25)
+
+    try:
+        # Get a list of schedule groups.
+        api_response = api_instance.get_architect_schedulegroups(
+            page_number=page_number, page_size=page_size
+        )
+        for i in api_response.entities:
+            schedulegroupids.append(i)
+        return schedulegroupids
+    except ApiException as e:
+        print(
+            "Exception when calling ArchitectApi->get_architect_schedulegroups: %s\n"
+            % e
+        )
+
+
+groupids = getallschedulegroups()
+
+
+def getschedulebyid(id):
+
+    # create an instance of the API class
+    api_instance = PureCloudPlatformClientV2.ArchitectApi(apiclient)
+    schedule_group_id = id  # str | Schedule group ID
+
+    try:
+        # Gets a schedule group by ID
+        api_response = api_instance.get_architect_schedulegroup(schedule_group_id)
+        return api_response
+    except ApiException as e:
+        print(
+            "Exception when calling ArchitectApi->get_architect_schedulegroup: %s\n" % e
+        )
+
+
+def updatescheduleholidays(schedulegroup):
+    open = schedulegroup.open_schedules
+    name = schedulegroup.name
+    closed = schedulegroup.closed_schedules
+    division = schedulegroup.division
+    holiday = schedulegroup.holiday_schedules
+    holidaySchedules = {
+        "id": "b48b7150-50de-438d-92b7-f885108f1d7a",
+        "name": "MLK Day",
+    }
+
+    holiday.append(holidaySchedules)
+    # create an instance of the API class
+    api_instance = PureCloudPlatformClientV2.ArchitectApi(apiclient)
+    schedule_group_id = schedulegroup.id  # str | Schedule group ID
+    body = PureCloudPlatformClientV2.ScheduleGroup()  # ScheduleGroup |
+    body.time_zone = "America/Denver"
+    body.open_schedules = open
+    body.closed_schedules = closed
+    body.holiday_schedules = holiday
+    body.name = name
+    body.division = division
+
+    try:
+        # Updates a schedule group by ID
+        api_response = api_instance.put_architect_schedulegroup(schedule_group_id, body)
+    except ApiException as e:
+        print(
+            "Exception when calling ArchitectApi->put_architect_schedulegroup: %s\n" % e
+        )
+
+
+for i in groupids:
+    updatescheduleholidays(i)

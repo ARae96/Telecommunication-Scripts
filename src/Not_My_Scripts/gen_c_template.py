@@ -1,0 +1,128 @@
+import base64
+import argparse
+import pandas as pd
+import pandas.io.sql as sqlio
+from csv import reader
+from io import StringIO
+import PureCloudPlatformClientV2
+from PureCloudPlatformClientV2.rest import ApiException
+from pprint import pprint
+import datetime
+import logging
+import requests
+import backoff
+
+logger = logging.getLogger()
+
+HTTP_SUCCESS = 200
+HTTP_RATE_LIMIT_ERROR = 429
+HTTP_NOT_FOUND = 404
+API_RETRY_INTERVAL_SECONDS = 30
+API_RETRY_COUNT = 5
+BASE_PURECLOUD_AUTH_HOST = 'https://login.{domain}'
+BASE_PURECLOUD_API_HOST = 'https://api.{domain}'
+
+def get_access_token(config):
+    "Returns an access_token for the client credentials, or raises if unauthorized"
+
+    client_id = config['client_id']
+    client_secret = config['client_secret']
+    client_domain = config['domain']
+
+    auth_host = BASE_PURECLOUD_AUTH_HOST.format(domain=client_domain)
+    auth_endpoint = '{}/oauth/token'.format(auth_host)
+
+    client_creds = "{}:{}".format(client_id, client_secret).encode('utf-8')
+    raw_authorization = base64.b64encode(client_creds)
+    authorization = raw_authorization.decode('ascii')
+
+    body = {'grant_type': 'client_credentials'}
+
+    headers = {
+        'Authorization': 'Basic {}'.format(authorization),
+        'Content-Type': 'application/x-www-form-urlencoded'
+    }
+
+    response = requests.post(auth_endpoint, data=body, headers=headers)
+
+    if response.status_code == HTTP_SUCCESS:
+        response_json = response.json()
+        return response_json['access_token']
+    else:
+        logger.fatal(response.json())
+        raise RuntimeError("Unauthorized")
+
+def giveup(error):
+    logger.warning("Encountered an error while syncing")
+    
+    logger.error(error)
+    
+    is_api_error = hasattr(error, 'status')
+    is_rate_limit_error = error.status == HTTP_RATE_LIMIT_ERROR
+    
+    logger.debug("Is API Error? {}. Is Rate Limit Error? {}.".format(is_api_error, is_rate_limit_error))
+
+    #  return true if we should *not* retry
+    
+    should_retry = is_api_error and is_rate_limit_error
+    return not should_retry
+
+@backoff.on_exception(backoff.constant,
+                      PureCloudPlatformClientV2.rest.ApiException,
+                      jitter=backoff.random_jitter,
+                      max_tries=API_RETRY_COUNT,
+                      giveup=giveup,
+                      interval=API_RETRY_INTERVAL_SECONDS)
+
+
+###
+### add functions here
+###
+
+
+
+
+def do_sync(args):
+    '''
+    gets the token to be used
+    
+    '''
+    logger.info("Starting Sync")
+    config = {
+    "domain": "mypurecloud.com",
+    "client_id": "",
+    "client_secret": ""
+    }
+    
+    logger.info("Getting access token")
+    access_token = get_access_token(config)
+
+    api_host = 'https://api.{domain}'.format(domain=config['domain'])
+
+    PureCloudPlatformClientV2.configuration.host = api_host
+    PureCloudPlatformClientV2.configuration.access_token = access_token
+    
+    handler(config)
+#main function 
+
+def handler(config):
+    '''
+    Add the functions for each call in this area followed by (config)
+        ex. get_users(config)
+    
+    '''
+    
+
+def main():
+    parser = argparse.ArgumentParser()
+
+    args = parser.parse_args()
+
+    try:
+        do_sync(args)
+    except RuntimeError:
+        logger.fatal("Run failed.")
+        exit(1)
+    
+if __name__ == "__main__":
+    main()
