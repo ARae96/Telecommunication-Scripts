@@ -14,3 +14,8 @@ __pycache__/
 
 # Cannot be committed
 .mcp-servers/
+
+# Excel files
+*.xlsx
+*.xls
+*.xlsm
