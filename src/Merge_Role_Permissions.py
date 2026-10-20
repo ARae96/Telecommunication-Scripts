@@ -69,7 +69,7 @@ from dotenv import load_dotenv
 # --- Configuration -----------------------------------------------------------
 # The person whose roles we read and roll up. Enter the user ID by hand. Do not
 # add a trailing slash; the ID is used as-is in the API call.
-source_user = 'f186481a-0ce1-428e-9607-4bb8aa1e5b91'
+source_user = ''
 
 # Baseline roles every user already has, used as a blacklist. We read these
 # roles, collect every action they grant, and remove those actions from the
@@ -84,7 +84,7 @@ ROLE_BLACKLIST = [
 ]
 
 # The role we write the merged permissions onto. Enter the role ID by hand.
-new_role = '57d27899-8f78-44e2-b959-1a081d4ddc47'
+new_role = ''
 
 # The most times we will retry the role write while dropping retired actions.
 # Each failed write tells us about one permission's bad actions, so we retry,
