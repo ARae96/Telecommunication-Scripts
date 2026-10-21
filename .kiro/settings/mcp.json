@@ -4,7 +4,7 @@
       "command": "/bin/sh",
       "args": [
         "-c",
-        "cd '/Users/alice.weaver/Coding Workspace' && set -a && . ./.env && set +a && GENESYSCLOUD_OAUTHCLIENT_ID=\"$GENESYS_CLOUD_CLIENT_ID\" GENESYSCLOUD_OAUTHCLIENT_SECRET=\"$GENESYS_CLOUD_CLIENT_SECRET\" GENESYSCLOUD_REGION=\"us-east-1\" exec /opt/homebrew/bin/node .mcp-servers/genesys-cloud-mcp-plus/dist/cli.js"
+        "cd '/Users/alice.weaver/Kiro Workspaces/Script Development' && set -a && . ./.env && set +a && GENESYSCLOUD_OAUTHCLIENT_ID=\"$GENESYS_CLOUD_CLIENT_ID\" GENESYSCLOUD_OAUTHCLIENT_SECRET=\"$GENESYS_CLOUD_CLIENT_SECRET\" GENESYSCLOUD_REGION=\"us-east-1\" exec /opt/homebrew/bin/node .mcp-servers/genesys-cloud-mcp-plus/dist/cli.js"
       ],
       "disabled": false,
       "autoApprove": []

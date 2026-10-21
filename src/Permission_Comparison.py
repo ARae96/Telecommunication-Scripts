@@ -54,17 +54,19 @@ from dotenv import load_dotenv
 # --- Configuration -----------------------------------------------------------
 # The role you want to check. Enter the role ID by hand. Its permissions are
 # combined with the base roles below to form the role side of the comparison.
-role_id = '57d27899-8f78-44e2-b959-1a081d4ddc47'
+role_id = '84f1296f-2ced-47e8-9c5d-8c98ba62659d'
 
 # The person whose permissions we compare against the roles. Enter the user ID
 # by hand. We gather every permission this person has, across all their roles.
-user_id = '4b080942-d01e-49c8-822f-08ff47b3d78f'
+user_id = '2d2883ee-456a-4433-8977-20e8eaec7ae3'
 
 # Base roles that are always part of the role side, on every run. Keeping these
 # here as a constant means you only set role_id and user_id each time, and these
 # roles are folded in for you. A permission counts as "in the roles" if role_id
 # or any of these base roles grants it.
-BASE_ROLES = ['4ab1c48a-5a6b-4962-a661-f5b4053cdbfe', '25e1a293-aaa0-4fdd-a15a-90955dc7fb13']
+BASE_ROLES = [
+    '4ab1c48a-5a6b-4962-a661-f5b4053cdbfe', # Employee Role
+    ]
 
 
 # --- Authentication ----------------------------------------------------------

@@ -69,8 +69,8 @@ from dotenv import load_dotenv
 # Enter the two user IDs by hand before running. "aml" is the person whose
 # access is already correct and that we copy from. "target" is the person we
 # make match the aml (a new hire or an internal transfer).
-aml = '25e322b0-5a98-44a3-bc45-b45eb45c6d7e'
-target = '39e0b085-95a0-4c45-ab72-eb5b10f57c2b'
+aml = 'fdbef2f8-cf78-4aac-b282-676f2cfcc006'
+target = '2d2883ee-456a-4433-8977-20e8eaec7ae3'
 
 # Safety switch. While this is True the script only reads and prints what it
 # would do, and makes no change in Genesys. Set it to False to actually apply
