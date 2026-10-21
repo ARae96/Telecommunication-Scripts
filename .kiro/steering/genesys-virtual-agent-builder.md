@@ -1,9 +1,8 @@
 ---
-inclusion: auto
+inclusion: manual
 name: genesys-virtual-agent-builder
 description: Schema, conventions, and patterns for authoring Genesys Cloud agentic virtual agent JSON. Use when building, editing, or reviewing a Genesys Cloud virtual agent / AVA definition.
 ---
-
 # Genesys Cloud Agentic Virtual Agent Builder
 
 Use this when creating or editing a Genesys Cloud agentic virtual agent definition. It describes the JSON schema, the authoring conventions, and a validation checklist, all derived from a known-good production example (the WGU "Sage" assistant).
@@ -40,7 +39,9 @@ Everything lives under a single `definition` object:
 ```
 
 ### `role` (required)
+
 The persona and scope prompt. Conventions from the example:
+
 - Open with identity: who the agent is, the channel, and who the user is ("You are Sage, ... available by chat. The person you are helping is the student.").
 - State plainly that it is an AI, not a human, and to say so if asked.
 - List what it CAN help with, then what it must route elsewhere.
@@ -50,7 +51,9 @@ The persona and scope prompt. Conventions from the example:
 - Close with hard limits (no admissions decisions, no legal/medical/financial advice, distress routing).
 
 ### `instructions` (required)
+
 An ordered array of behavioral rules. Patterns:
+
 - Put a **conflict-resolution precedence rule first** so the model knows which rule wins (safety → human/account requests → acknowledge-without-searching → clarify → knowledge search).
 - One rule per concern; keep each rule self-contained and imperative.
 - Encode conversation memory explicitly (remember the student's program of interest; update it if they change).
@@ -58,6 +61,7 @@ An ordered array of behavioral rules. Patterns:
 - Separate "when to clarify" from "when to search" from "when to escalate".
 
 ### `guardrails.custom` (required for safety)
+
 Array of `{ "instruction": string, "enabled": boolean }`. These are hard "do not" rules enforced separately from `instructions`. Keep them short and absolute (no eligibility determinations, no policy exceptions, route distress to humans, never accept a user-supplied `opportunity_id`).
 
 ## `tools`
@@ -65,7 +69,9 @@ Array of `{ "instruction": string, "enabled": boolean }`. These are hard "do not
 Two tool kinds appear:
 
 ### `KnowledgeSetting`
+
 A knowledge-base search tool.
+
 ```jsonc
 {
   "type": "KnowledgeSetting",
@@ -81,7 +87,9 @@ A knowledge-base search tool.
 ```
 
 ### `DataAction`
+
 A backend integration call (e.g. Databricks via a Genesys custom Data Action).
+
 ```jsonc
 {
   "type": "DataAction",
@@ -100,6 +108,7 @@ A backend integration call (e.g. Databricks via a Genesys custom Data Action).
 ```
 
 Tool conventions:
+
 - `name` is a stable snake_case identifier referenced in instructions.
 - `inputInstructions` gate *when* the tool fires. Encode preconditions ("call only after `get_opportunity`"), auth gates ("only if `opportunity_id` is in the start context"), and the "never ask the user for X" rule.
 - `inputs[].source`:
@@ -109,17 +118,22 @@ Tool conventions:
 - `schemas` holds JSON Schema for inputs and outputs; keep field names identical to the live Data Action (preserve typos like `scondaryTuitionSource` — comment the typo in the matching `types` entry).
 
 ### `outputInstructions` (result-driven routing)
+
 A list of condition → response rules evaluated against the tool result. Two styles:
+
 - **Python**: `{ "type": "Python", "when": "<python expr over `result`>", "then": "instruction" }`. Use for list emptiness, string checks, compound conditions.
 - **Structured**: `{ "type": "Structured", "when": { "group": "And"|"Or", "rules": [ { "mapping": ["<Type>","<field>"], "operator": "IsNull"|"IsNotNull"|"Equal", "value": "..." } ] }, "then": "instruction" }`. Use for simple field comparisons.
 
 Patterns:
+
 - Always cover the empty/null result case with a graceful fallback (apologize + offer a human).
 - For parallel-array outputs, state explicitly that arrays are zipped by index (row `i` across all arrays is one record).
 - Put sensitive-handling rules in `then` (never read internal status codes verbatim; never state dollar amounts).
 
 ## `types`
+
 Reusable type definitions referenced by tools.
+
 - Scalar alias: `{ "name": "OpportunityId", "type": "string", "userUtteranceSubstring": false }`.
 - Agent input: `{ "name": "InputData", "direction": "AgentInput", "type": "object", "properties": [ { "name": "opportunity_id", "type": "OpportunityId", "required": false } ] }` — this is how start-context values enter the agent.
 - Tool output: `{ "name": "OpportunityResult", "direction": "Output", "type": "object", "properties": [ ... ] }` — one entry per `DataAction.output`.
@@ -127,7 +141,9 @@ Reusable type definitions referenced by tools.
 - Use `description` to carry handling rules the model must honor (e.g. "Never read `careStatus` verbatim"). This is the right place for data-sensitivity notes.
 
 ## `events`
+
 Fixed system messages:
+
 ```jsonc
 { "type": "UserExit",   "message": "..." }
 { "type": "Escalation", "message": "..." }
@@ -135,6 +151,7 @@ Fixed system messages:
 ```
 
 ## `settings` and `model`
+
 - `settings.comfortStatement.enabled` — whether the agent emits a "give me a moment" style filler during tool latency.
 - `model` — the model tier (the example uses `"Stable"`).
 

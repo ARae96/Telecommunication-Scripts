@@ -29,7 +29,10 @@
 # to change by hand.
 
 #----Cell 3 in Databricks----
-%pip install PureCloudPlatformClientV2
+# LOCAL RUN: this %pip line is a Databricks notebook command, not real Python,
+# so it breaks when the file is parsed locally. We keep it commented out here
+# and uncomment it when the code runs as a Databricks notebook cell.
+# %pip install -r requirements.txt  # LOCAL RUN: keep commented; Databricks-only
 
 #----Cell 4 in Databricks----
 # Imports

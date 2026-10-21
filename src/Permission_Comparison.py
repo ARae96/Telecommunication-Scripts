@@ -58,7 +58,7 @@ role_id = '84f1296f-2ced-47e8-9c5d-8c98ba62659d'
 
 # The person whose permissions we compare against the roles. Enter the user ID
 # by hand. We gather every permission this person has, across all their roles.
-user_id = '2d2883ee-456a-4433-8977-20e8eaec7ae3'
+user_id = '6fd4c6ad-8f6f-4992-ac96-a52541522979'
 
 # Base roles that are always part of the role side, on every run. Keeping these
 # here as a constant means you only set role_id and user_id each time, and these
