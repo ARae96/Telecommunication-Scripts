@@ -1,40 +1,50 @@
 # =============================================================================
-# Genesys Cloud - Update The Holiday Decision In Service Ops Flows
+# Genesys Cloud - Flip The Hours-Of-Operation Time Offset In Service Ops Flows
 # =============================================================================
-# Many of our call flows start with the same decision at the top: a Boolean
-# Expression that checks whether "right now" falls inside one of our holiday
-# closure windows. When it is a holiday, the flow sends the caller down a
-# different path. Today we edit that expression by hand in the Genesys Cloud
-# Architect user interface (UI), one flow at a time. This script does that
-# same edit for you, across a list of flows, using the Architect API.
+# Some of our call flows decide "are we open right now?" by comparing the
+# current time to our open and close hours. To do that comparison in local
+# time, the flow first shifts the current Coordinated Universal Time (UTC) by a
+# fixed number of hours. That shift lives inside the flow as
+# AddHours(GetCurrentDateTimeUtc(), N), where N is the offset. Twice a year,
+# when daylight saving time starts or ends, that offset has to change (for us,
+# between -6 and -7). Today we change it by hand in the Genesys Cloud Architect
+# user interface (UI), one flow at a time. This script does that same change
+# for you, across a list of flows, using the Architect API.
+#
+# What the script changes: the open/close "hours of operation" checks only.
+# Those checks live in the Switch cases that use DayOfWeek(...) to tell weekdays
+# from weekends. Every AddHours(GetCurrentDateTimeUtc(), OLD_UTC_OFFSET) inside
+# those cases is rewritten to AddHours(GetCurrentDateTimeUtc(), NEW_UTC_OFFSET).
+#
+# What the script leaves alone: the holiday decision at the top of the flow.
+# That holiday check also uses AddHours(GetCurrentDateTimeUtc(), ...), but it is
+# maintained separately. This script never touches it. The hour numbers inside
+# MakeDateTime(...) (like the "6" in 6 AM) are also left alone, because this
+# script only rewrites the offset argument to AddHours, nowhere else.
 #
 # What the script does for each flow you list:
 #   Step 1: Check out the flow so we can edit it (same as opening it in the UI).
-#   Step 2: Export the flow to a YAML file (the flow's full definition as text).
-#   Step 3: Find the one holiday decision expression inside that YAML and swap
-#           it for a new expression built from the holiday dates below.
+#   Step 2: Export the flow to YAML (the flow's full definition as text).
+#   Step 3: Find the hours-of-operation case expressions (the ones that use
+#           DayOfWeek) and flip the offset inside them from OLD to NEW.
 #   Step 4: Import the edited YAML back onto the same flow.
 #   Step 5: Publish the flow so the change goes live.
 #
-# Where the new expression comes from: you keep a plain list of holidays near
-# the top of this file (name, dates, and the hour offset for that date). The
-# script turns that list into the same kind of expression we write by hand, so
-# nobody has to hand-type all the MakeDateTime(...) parts each year. When the
-# holidays change, you edit the list, not the expression.
+# How the script finds the right expressions to change: it does NOT rely on the
+# cases being in a fixed spot. It looks for expressions that contain
+# DayOfWeek(AddHours(GetCurrentDateTimeUtc(), ...)). That shape belongs only to
+# the hours-of-operation checks, so it is a safe thing to match on, and it never
+# matches the holiday block.
 #
-# How the script finds the right expression to replace: it does NOT rely on the
-# holiday decision being "the first one." Instead it looks for the expression
-# whose text is made only of MakeDateTime(...) date windows joined by And/Or.
-# That shape is unique to the holiday check, so it is a safe thing to match on.
-# Before changing anything, the script confirms it found exactly one such
-# expression in the flow. If it finds none, or more than one, it stops and
-# changes nothing, because guessing could break the flow.
+# Reversing it later: the offset flips back the other way every six months. To
+# reverse a change, swap the two values in OLD_UTC_OFFSET and NEW_UTC_OFFSET and
+# run the script again.
 #
 # Safety: this script changes live Genesys Cloud flows, so it honors a DRY_RUN
-# flag that defaults to True. While DRY_RUN is True it only reads: it checks
-# out and exports each flow, shows you the old expression and the new one it
-# would write, and then stops without importing or publishing. Set DRY_RUN to
-# False only once the preview looks right.
+# flag that defaults to True. While DRY_RUN is True it only reads: it checks out
+# and exports each flow, shows you how many offsets it would change, and then
+# stops without importing or publishing. Set DRY_RUN to False only once the
+# preview looks right.
 #
 # Run locally with:
 #   pip install -r requirements.txt
@@ -54,46 +64,26 @@ from dotenv import load_dotenv
 
 
 # --- Configuration -----------------------------------------------------------
-# The flows to update. Add as many flow IDs as you need, one per line. The
-# holiday decision is in the same place in each of these flows, so the same new
-# expression is written to every one of them.
+# The flows to update. Add as many flow IDs as you need, one per line. The same
+# offset flip is applied to every flow in this list.
 FLOW_IDS = [
     'REPLACE-WITH-FLOW-ID',
 ]
 
-# The holidays that should send callers down the closure path. Each holiday is
-# one entry with four plain values:
-#   name       - a label, only used in the printout so you can read the list.
-#   start      - the first moment of the closure, as (year, month, day).
-#   end        - the first moment AFTER the closure, as (year, month, day). The
-#                window is "start up to, but not including, end", so a one-day
-#                closure uses the next day as its end. A two-day closure (like
-#                a holiday plus the day after) uses the day after the last day.
-#   utc_offset - the hours to add to UTC to get our local time on that date.
-#                We use -7 when the date is in daylight saving time's "standard"
-#                part of the year as our flows define it, and -6 otherwise. Keep
-#                using the same offsets we already use in the UI for each date;
-#                copy them from the current expression if unsure.
+# The time offset to change, in hours added to UTC. The flow holds this number
+# inside AddHours(GetCurrentDateTimeUtc(), N). OLD_UTC_OFFSET is the value in
+# the flow right now; NEW_UTC_OFFSET is what you want it to become. When
+# daylight saving time flips, swap these two values and run the script again.
 #
-# This list reproduces the expression we run today. Edit it when the holiday
-# schedule changes, then run the script to push the new expression out.
-HOLIDAYS = [
-    {'name': 'Martin Luther King Jr. Day', 'start': (2027, 1, 19),  'end': (2027, 1, 20),  'utc_offset': -7},
-    {'name': "Presidents' Day",            'start': (2026, 2, 16),  'end': (2026, 2, 17),  'utc_offset': -7},
-    {'name': 'Memorial Day',               'start': (2026, 5, 25),  'end': (2026, 5, 26),  'utc_offset': -6},
-    {'name': 'Juneteenth',                 'start': (2026, 6, 19),  'end': (2026, 6, 20),  'utc_offset': -6},
-    {'name': 'Independence Day',           'start': (2026, 7, 3),   'end': (2026, 7, 5),   'utc_offset': -6},
-    {'name': 'Pioneer Day',                'start': (2026, 8, 26),  'end': (2026, 8, 27),  'utc_offset': -6},
-    {'name': 'Labor Day',                  'start': (2026, 9, 7),   'end': (2026, 9, 8),   'utc_offset': -6},
-    {'name': 'Thanksgiving',               'start': (2026, 11, 26), 'end': (2026, 11, 27), 'utc_offset': -7},
-    {'name': 'Day After Thanksgiving',     'start': (2026, 11, 27), 'end': (2026, 11, 28), 'utc_offset': -7},
-    {'name': 'Christmas',                  'start': (2026, 12, 24), 'end': (2026, 12, 26), 'utc_offset': -7},
-]
+# For us the offset is -6 during daylight saving time and -7 the rest of the
+# year, so a typical run sets one of these to -6 and the other to -7.
+OLD_UTC_OFFSET = -6
+NEW_UTC_OFFSET = -7
 
 # While DRY_RUN is True the script only reads. It checks out and exports each
-# flow, prints the old and new expression, and stops before importing or
+# flow, prints how many offsets it would change, and stops before importing or
 # publishing. No flow is changed. Set this to False to actually write the new
-# expression and publish.
+# offset and publish.
 DRY_RUN = True
 
 # A long-running Architect job (export or import) is not finished the instant
@@ -130,128 +120,94 @@ def build_apis():
     return PureCloudPlatformClientV2.ArchitectApi(apiclient)
 
 
-# --- Build the new expression ------------------------------------------------
-def build_holiday_window(holiday):
-    """Return the expression text for one holiday's date window.
-
-    Builds the same shape we write by hand in the UI for a single holiday:
-
-        ((AddHours(GetCurrentDateTimeUtc(), OFFSET) >= MakeDateTime(START))
-         And (AddHours(GetCurrentDateTimeUtc(), OFFSET) < MakeDateTime(END)))
-
-    The check says "local time is at or after the start, and before the end",
-    which is how a closure window is matched. The offset turns UTC into our
-    local time for that date (see the note on utc_offset in HOLIDAYS).
-    """
-    offset = holiday['utc_offset']
-    start_year, start_month, start_day = holiday['start']
-    end_year, end_month, end_day = holiday['end']
-
-    # "local now" is the same subexpression used on both sides of the window,
-    # so build it once and reuse it to keep the text consistent.
-    local_now = "AddHours(GetCurrentDateTimeUtc(), %d)" % offset
-    start_moment = "MakeDateTime(%d, %d, %d, 0, 0, 0)" % (start_year, start_month, start_day)
-    end_moment = "MakeDateTime(%d, %d, %d, 0, 0, 0)" % (end_year, end_month, end_day)
-
-    return "((%s >= %s) And (%s < %s))" % (local_now, start_moment, local_now, end_moment)
-
-
-def build_holiday_expression(holidays):
-    """Return the full holiday Boolean Expression built from the holiday list.
-
-    Joins each holiday's window (from build_holiday_window) with "Or" so the
-    whole expression is true when "now" falls inside any one of the windows.
-    This is the exact text we would otherwise type into the decision by hand.
-
-    Stops the script if the holiday list is empty, because an empty expression
-    would be meaningless and could break the decision if it were ever written.
-    """
-    if not holidays:
-        raise SystemExit(
-            "The HOLIDAYS list is empty, so there is no expression to build. Add "
-            "at least one holiday near the top of the script before running."
-        )
-
-    windows = []
-    for holiday in holidays:
-        windows.append(build_holiday_window(holiday))
-
-    # Join the windows with " Or " on its own so the result reads as one long
-    # "window Or window Or window" expression, matching the hand-written form.
-    return "\n\nOr ".join(windows)
-
-
-# --- Find and replace the expression in the exported YAML --------------------
-# An Architect holiday window looks like a pair of MakeDateTime(...) checks on
-# AddHours(GetCurrentDateTimeUtc(), N), joined by And and wrapped in parens.
-# This pattern matches one such window. We use it only to confirm that the
-# block we are about to replace really is the holiday check and nothing else.
-# The pattern is deliberately loose about spacing so small formatting
-# differences in the exported YAML do not cause a miss.
-_WINDOW_PATTERN = re.compile(
-    r"\(\s*\(\s*AddHours\(\s*GetCurrentDateTimeUtc\(\)\s*,\s*-?\d+\s*\)\s*>=\s*"
-    r"MakeDateTime\([^)]*\)\s*\)\s*And\s*\(\s*AddHours\(\s*GetCurrentDateTimeUtc\(\)\s*,\s*-?\d+\s*\)\s*<\s*"
-    r"MakeDateTime\([^)]*\)\s*\)\s*\)"
-)
-
-# A whole holiday expression is one or more of those windows joined by "Or".
-# We match the full run of windows-and-Ors as a single block so we can replace
-# the entire old expression in one go. This is what we actually swap out.
-_EXPRESSION_PATTERN = re.compile(
-    _WINDOW_PATTERN.pattern + r"(?:\s*Or\s*" + _WINDOW_PATTERN.pattern + r")*"
+# --- Find and flip the offset in the exported YAML ---------------------------
+# The hours-of-operation checks are the only expressions that ask what day of
+# the week it is, using DayOfWeek(AddHours(GetCurrentDateTimeUtc(), N)). We use
+# that shape to find those lines. The holiday block never uses DayOfWeek, so
+# this match leaves the holiday block alone. We allow any offset inside so the
+# same pattern works no matter which way the offset is set today. "re.escape"
+# below just keeps punctuation literal, so the match is for the exact text.
+_DAYOFWEEK_MARKER = re.compile(
+    r"DayOfWeek\(\s*AddHours\(\s*GetCurrentDateTimeUtc\(\)\s*,\s*-?\d+\s*\)\s*\)"
 )
 
 
-def find_existing_expression(flow_yaml):
-    """Return the one holiday expression found in the flow YAML, or stop.
+def count_old_offset(text):
+    """Return how many times the old offset appears in the given text.
 
-    Searches the exported flow text for a block that is only MakeDateTime(...)
-    date windows joined by And/Or. That shape is unique to the holiday check,
-    so finding exactly one of them tells us where to make the change.
-
-    Returns the matched expression text so the caller can show it and replace
-    it. Stops the script if it finds none or more than one, because changing
-    the wrong block (or guessing which of several to change) could break the
-    flow. A clear stop is safer than a wrong edit.
+    Counts the exact AddHours(GetCurrentDateTimeUtc(), OLD_UTC_OFFSET) text. We
+    use this to show a before-count in the preview and to confirm the change
+    landed. It does not change anything.
     """
-    matches = _EXPRESSION_PATTERN.findall(flow_yaml)
-
-    if len(matches) == 0:
-        raise SystemExit(
-            "Could not find the holiday expression in the exported flow. Nothing "
-            "was changed. The flow may not have a MakeDateTime-based holiday "
-            "decision, or its format may have changed. Check the flow in the "
-            "Architect UI."
-        )
-
-    if len(matches) > 1:
-        raise SystemExit(
-            "Found %d holiday-style expressions in the exported flow, so it is "
-            "not clear which one to change. Nothing was changed. Review the flow "
-            "in the Architect UI before running again." % len(matches)
-        )
-
-    return matches[0]
+    needle = "AddHours(GetCurrentDateTimeUtc(), %d)" % OLD_UTC_OFFSET
+    return text.count(needle)
 
 
-def replace_expression_in_yaml(flow_yaml, old_expression, new_expression):
-    """Return the flow YAML with the old holiday expression swapped for the new.
+def flip_offset_in_expression(expression_text):
+    """Return the case expression with every old offset flipped to the new one.
 
-    Replaces only the one old expression block we found, nowhere else, so the
-    rest of the flow text is left exactly as it was. Stops the script if the
-    swap does not change the text, which would mean the replace did not take
-    and we should not import an unchanged file as if it were updated.
+    Replaces every AddHours(GetCurrentDateTimeUtc(), OLD_UTC_OFFSET) with
+    AddHours(GetCurrentDateTimeUtc(), NEW_UTC_OFFSET) inside this one case
+    expression. Nothing else in the text is touched, so the hour numbers inside
+    MakeDateTime(...) and any other logic stay exactly as they were.
     """
-    updated_yaml = flow_yaml.replace(old_expression, new_expression, 1)
+    old_text = "AddHours(GetCurrentDateTimeUtc(), %d)" % OLD_UTC_OFFSET
+    new_text = "AddHours(GetCurrentDateTimeUtc(), %d)" % NEW_UTC_OFFSET
+    return expression_text.replace(old_text, new_text)
 
-    if updated_yaml == flow_yaml:
+
+def find_hours_of_operation_expressions(flow_yaml):
+    """Return the hours-of-operation expression lines found in the flow YAML.
+
+    The flow exports each expression as a single line, so we scan the YAML line
+    by line and keep every line that contains the DayOfWeek(AddHours(...)) shape
+    unique to the hours-of-operation cases. Returns the list of whole matching
+    lines so the caller can rewrite them.
+
+    Stops the script if it finds no such lines, because that means the flow does
+    not look the way we expect and changing it could break it. A clear stop is
+    safer than a wrong edit.
+    """
+    matching_lines = []
+    for line in flow_yaml.splitlines():
+        if _DAYOFWEEK_MARKER.search(line):
+            matching_lines.append(line)
+
+    if not matching_lines:
         raise SystemExit(
-            "The holiday expression replacement did not change the flow text, so "
-            "nothing was imported. This should not happen after a match was "
-            "found; check the flow in the Architect UI."
+            "Could not find any hours-of-operation expressions (the ones that "
+            "use DayOfWeek) in the exported flow. Nothing was changed. The flow "
+            "may not have these checks, or its format may have changed. Check "
+            "the flow in the Architect UI."
         )
 
-    return updated_yaml
+    return matching_lines
+
+
+def flip_offset_in_yaml(flow_yaml):
+    """Return the flow YAML with the offset flipped in the hours checks only.
+
+    Step 1: Find the hours-of-operation expression lines (the DayOfWeek ones).
+    Step 2: For each of those whole lines, flip every old offset to the new one
+            and replace that exact line in the YAML.
+
+    Returns a pair: the updated YAML text and the number of offsets changed. We
+    rewrite whole matched lines, so no AddHours offset outside these expressions
+    (such as the holiday block at the top) is ever touched.
+    """
+    expression_lines = find_hours_of_operation_expressions(flow_yaml)
+
+    updated_yaml = flow_yaml
+    total_changed = 0
+    for old_line in expression_lines:
+        changed_in_line = count_old_offset(old_line)
+        new_line = flip_offset_in_expression(old_line)
+        # Replace this exact line text wherever it appears. The line is a long,
+        # unique expression, so this only touches the case we matched.
+        updated_yaml = updated_yaml.replace(old_line, new_line)
+        total_changed += changed_in_line
+
+    return updated_yaml, total_changed
 
 
 # --- Talk to the presigned URLs ----------------------------------------------
@@ -396,15 +352,14 @@ def import_flow_yaml(architect_api, flow_yaml):
     return wait_for_import_job(architect_api, import_response.id)
 
 
-def update_one_flow(architect_api, flow_id, new_expression):
-    """Update the holiday expression in one flow, then publish it.
+def update_one_flow(architect_api, flow_id):
+    """Flip the hours-of-operation offset in one flow, then publish it.
 
     Step 1: Check out the flow so we are allowed to change it.
-    Step 2: Export the flow to YAML and find its one holiday expression.
-    Step 3: Show the old and new expression so you can see the change.
+    Step 2: Export the flow to YAML and flip the offset in the hours checks.
+    Step 3: Show how many offsets changed so you can see the result.
     Step 4: If DRY_RUN is True, stop here and change nothing.
-    Step 5: Swap the old expression for the new one, import the edited YAML,
-            and publish the flow so the change goes live.
+    Step 5: Import the edited YAML and publish the flow so the change goes live.
 
     Catches its own errors and returns True on success or False on failure, so
     one bad flow does not stop the script from trying the rest of the list.
@@ -419,19 +374,23 @@ def update_one_flow(architect_api, flow_id, new_expression):
         architect_api.post_flows_actions_checkout(flow_id)
 
         flow_yaml = export_flow_yaml(architect_api, flow_id)
-        old_expression = find_existing_expression(flow_yaml)
+        updated_yaml, changed_count = flip_offset_in_yaml(flow_yaml)
 
-        print("Old expression found in flow:")
-        print(old_expression)
-        print("\nNew expression that would be written:")
-        print(new_expression)
+        print("Found hours-of-operation checks and would change the offset from "
+              "%d to %d in %d place(s)." % (OLD_UTC_OFFSET, NEW_UTC_OFFSET, changed_count))
 
-        if DRY_RUN:
-            print("\n[DRY-RUN] Not importing or publishing. Set DRY_RUN to False "
-                  "to apply this change.")
+        # If the match found the cases but none of them held the old offset,
+        # the flow is probably already set the way we want. Stop so we do not
+        # import an unchanged file and publish it for no reason.
+        if changed_count == 0:
+            print("No offsets to change in this flow. It may already use the new "
+                  "offset. Leaving it as-is.")
             return True
 
-        updated_yaml = replace_expression_in_yaml(flow_yaml, old_expression, new_expression)
+        if DRY_RUN:
+            print("[DRY-RUN] Not importing or publishing. Set DRY_RUN to False "
+                  "to apply this change.")
+            return True
 
         import_flow_yaml(architect_api, updated_yaml)
         print("Imported the edited flow.")
@@ -451,18 +410,24 @@ def update_one_flow(architect_api, flow_id, new_expression):
 
 
 # --- Main --------------------------------------------------------------------
-def main(flow_ids, holidays):
-    """Update the holiday decision expression across a list of flows.
+def main(flow_ids):
+    """Flip the hours-of-operation time offset across a list of flows.
 
-    Step 1: Stop early if there are no flows to update, so we never start a run
-            that has nothing to do.
-    Step 2: Build the new holiday expression once from the holiday list, since
-            every flow gets the same expression.
+    Step 1: Stop early if the old and new offset are the same, so we never run a
+            flip that would change nothing.
+    Step 2: Stop early if there are no flows to update.
     Step 3: Sign in to Genesys Cloud.
     Step 4: Update each flow in turn, keeping count of which succeeded and which
             failed, so one bad flow does not stop the others.
     Step 5: Print a short summary so you can see the result at a glance.
     """
+    if OLD_UTC_OFFSET == NEW_UTC_OFFSET:
+        raise SystemExit(
+            "OLD_UTC_OFFSET and NEW_UTC_OFFSET are both %d, so there is nothing "
+            "to change. Set them to the two different offsets you want to flip "
+            "between (for us, -6 and -7)." % OLD_UTC_OFFSET
+        )
+
     # Keep only the flow IDs that are actually filled in, so a leftover blank or
     # the placeholder line does not cause a pointless call that would fail.
     real_flow_ids = []
@@ -476,11 +441,9 @@ def main(flow_ids, holidays):
             "near the top of the script before running."
         )
 
-    new_expression = build_holiday_expression(holidays)
-
     if DRY_RUN:
-        print("DRY_RUN is True, so no flow will be changed. You will see the old "
-              "and new expression for each flow, then the script will stop "
+        print("DRY_RUN is True, so no flow will be changed. You will see how many "
+              "offsets would change in each flow, then the script will stop "
               "before importing or publishing.")
 
     architect_api = build_apis()
@@ -488,7 +451,7 @@ def main(flow_ids, holidays):
     succeeded = 0
     failed = 0
     for flow_id in real_flow_ids:
-        if update_one_flow(architect_api, flow_id, new_expression):
+        if update_one_flow(architect_api, flow_id):
             succeeded += 1
         else:
             failed += 1
@@ -498,4 +461,4 @@ def main(flow_ids, holidays):
 
 
 if __name__ == '__main__':
-    main(FLOW_IDS, HOLIDAYS)
+    main(FLOW_IDS)
