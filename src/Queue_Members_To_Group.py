@@ -37,13 +37,13 @@ from dotenv import load_dotenv
 # Enter the IDs by hand before running. source_queues is the list of queues we
 # read users from; add as many queue IDs as you need, one per line. new_group
 # is the group we add those users to.
-source_queues = ['99e90066-a5ce-4b88-a8b6-0e7bc4810e10']
-new_group = '22983221-0d6f-4c1d-bb75-236aa35c2b9c'
+source_queues = ['']
+new_group = ''
 
 # While DRY_RUN is True the script only reads and prints what it would do. It
 # makes no changes in Genesys Cloud. Set this to False to actually add members
 # to the group.
-DRY_RUN = False
+DRY_RUN = True
 
 # How many members to ask for on each page when reading the queue. The queue
 # members API returns results one page at a time, so we loop through pages.
@@ -84,6 +84,40 @@ def build_apis():
 
 
 # --- Steps -------------------------------------------------------------------
+def get_queue_name(routing_api, queue_id):
+    """Return the name of a queue, or a fallback label if we cannot read it.
+
+    We print this name during the dry run so you can confirm you entered the
+    right queue before running for real. If the read fails we return a short
+    "(name unavailable)" label instead of stopping, because a missing name
+    should not block the rest of the run.
+    """
+    try:
+        queue = routing_api.get_routing_queue(queue_id)
+    except ApiException as e:
+        print("Exception when calling RoutingApi->get_routing_queue: %s\n" % e)
+        return "(name unavailable)"
+
+    return getattr(queue, 'name', None) or "(name unavailable)"
+
+
+def get_group_name(groups_api, group_id):
+    """Return the name of a group, or a fallback label if we cannot read it.
+
+    We print this name during the dry run so you can confirm you entered the
+    right group before running for real. If the read fails we return a short
+    "(name unavailable)" label instead of stopping, because a missing name
+    should not block the rest of the run.
+    """
+    try:
+        group = groups_api.get_group(group_id)
+    except ApiException as e:
+        print("Exception when calling GroupsApi->get_group: %s\n" % e)
+        return "(name unavailable)"
+
+    return getattr(group, 'name', None) or "(name unavailable)"
+
+
 def get_queue_user_ids(routing_api, queue_id):
     """Return the user IDs of every user assigned to a queue.
 
@@ -156,8 +190,15 @@ def get_unique_user_ids_across_queues(routing_api, queue_ids):
         if not queue_id:
             continue
 
+        # Read the queue's name so the output shows which queue these users
+        # came from, not just its ID. This makes it easy to confirm you
+        # entered the right queue.
+        queue_name = get_queue_name(routing_api, queue_id)
         queue_user_ids = get_queue_user_ids(routing_api, queue_id)
-        print("Queue %s has %d users." % (queue_id, len(queue_user_ids)))
+        print(
+            "Queue '%s' (%s) has %d users."
+            % (queue_name, queue_id, len(queue_user_ids))
+        )
 
         for user_id in queue_user_ids:
             # Add each user only the first time we see them. The seen set is how
@@ -183,12 +224,13 @@ def split_into_batches(items, batch_size):
     return batches
 
 
-def add_members_to_group(groups_api, group_id, user_ids):
+def add_members_to_group(groups_api, group_id, group_name, user_ids):
     """Add the given user IDs as members of a group.
 
     Adds people in batches of at most 50 because that is the most the API will
     take in one request. Builds a GroupMembersUpdate body for each batch and
-    sends it. Prints progress for each batch.
+    sends it. Prints progress for each batch, including the group's name so you
+    can confirm it is the group you meant.
 
     When DRY_RUN is True this makes no changes. It only prints what it would
     add, with a [DRY-RUN] prefix, so you can check the plan before running for
@@ -200,8 +242,8 @@ def add_members_to_group(groups_api, group_id, user_ids):
     for batch_number, batch in enumerate(batches, start=1):
         if DRY_RUN:
             print(
-                "[DRY-RUN] Would add batch %d of %d (%d members) to group %s"
-                % (batch_number, len(batches), len(batch), group_id)
+                "[DRY-RUN] Would add batch %d of %d (%d members) to group '%s' (%s)"
+                % (batch_number, len(batches), len(batch), group_name, group_id)
             )
             continue
 
@@ -211,8 +253,8 @@ def add_members_to_group(groups_api, group_id, user_ids):
         try:
             groups_api.post_group_members(group_id, body)
             print(
-                "Added batch %d of %d (%d members) to group %s"
-                % (batch_number, len(batches), len(batch), group_id)
+                "Added batch %d of %d (%d members) to group '%s' (%s)"
+                % (batch_number, len(batches), len(batch), group_name, group_id)
             )
         except ApiException as e:
             print("Exception when calling GroupsApi->post_group_members: %s\n" % e)
@@ -257,11 +299,15 @@ def main(source_queue_ids, new_group_id):
 
     print("Found %d unique users across all queues." % len(user_ids))
 
+    # Read the group's name so the dry-run (and the real run) show which group
+    # these users would be added to, not just its ID.
+    group_name = get_group_name(groups_api, new_group_id)
+
     if DRY_RUN:
         print("DRY_RUN is True, so no members will actually be added. Set "
               "DRY_RUN to False to add them for real.")
 
-    add_members_to_group(groups_api, new_group_id, user_ids)
+    add_members_to_group(groups_api, new_group_id, group_name, user_ids)
     print('Done.')
 
 
