@@ -15,11 +15,12 @@
 # Fill in SOURCE_ROLE_IDS (a list of one or more roles to copy FROM) and
 # TARGET_ROLE_ID (the one role to merge INTO) before you run it.
 #
-# Safety: DRY_RUN is True by default. In dry-run mode the script only reads the
-# roles and prints what it would add to the target. It makes no changes until
-# you set DRY_RUN to False. Please note: when DRY_RUN is False this updates the
-# target role, so double-check the IDs before you turn it off. The source roles
-# are never changed.
+# Safety: the script always reads first and shows you a summary of the merge
+# before it changes anything. It names the source role(s), the target role, and
+# how many permission policies the target has now versus after the merge. Then
+# it asks you to confirm in a pop-up dialog (with a typed fallback if the dialog
+# cannot be shown). Nothing is saved unless you confirm. The source roles are
+# never changed.
 #
 # Local runs need `pip install -r requirements.txt` and a populated .env with
 # GENESYS_CLOUD_CLIENT_ID and GENESYS_CLOUD_CLIENT_SECRET.
@@ -33,8 +34,9 @@
 import os
 import PureCloudPlatformClientV2
 from PureCloudPlatformClientV2.rest import ApiException
-from pprint import pprint
 from dotenv import load_dotenv
+
+from confirm_prompt import ask_to_confirm
 
 
 # --- Configuration -----------------------------------------------------------
@@ -50,10 +52,6 @@ SOURCE_ROLE_IDS = [
 # The one role we merge everything into. This role is changed: it keeps its own
 # permissions and gains the permissions from every source role above.
 TARGET_ROLE_ID = '84f1296f-2ced-47e8-9c5d-8c98ba62659d'  # merge permissions INTO this role
-
-# When True, perform reads only and print the intended change without applying
-# it. Set to False only once you are sure the IDs above are correct.
-DRY_RUN = False
 
 
 # --- Setup -------------------------------------------------------------------
@@ -177,14 +175,42 @@ def build_merged_policies(target_role, source_roles):
     return list(merged_by_key.values())
 
 
+def format_merge_for_confirm(source_roles, target_role, before_count, after_count):
+    """Build the confirm message that describes the merge in plain language.
+
+    Names the source role(s) whose permissions are being merged, the target role
+    they merge into, and how many permission policies the target has now versus
+    after the merge. Returns one block of text with real new lines, shown in the
+    confirm dialog and the typed fallback.
+    """
+    lines = []
+
+    lines.append("The following source role(s) will be merged:")
+    for source_role in source_roles:
+        lines.append(source_role.name)
+
+    lines.append("")
+    lines.append("Their permissions will be merged INTO this target role:")
+    lines.append(target_role.name)
+
+    lines.append("")
+    lines.append(
+        "The target role has %d permission policy(ies) now and will have %d after the merge."
+        % (before_count, after_count)
+    )
+    lines.append("The target keeps everything it already has; nothing is removed.")
+
+    return '\n'.join(lines)
+
+
 def merge_permissions_into_target(auth_api, source_roles, target_role):
     """Merge the source roles' permissions into the target role.
 
     This changes the target role. It keeps the target's own permission policies
     and adds the ones from every source role, combining any that cover the same
     domain and entity. The target role keeps its own name and description, so
-    only the permissions change. Does nothing (just prints) while DRY_RUN is
-    True.
+    only the permissions change. It shows a summary and asks you to confirm
+    first, and saves nothing if you do not confirm.
     """
     for source_role in source_roles:
         count = len(source_role.permission_policies or [])
@@ -196,10 +222,11 @@ def merge_permissions_into_target(auth_api, source_roles, target_role):
     print("Target role '%s' has %d permission policy(ies) now and will have %d after the merge."
           % (target_role.name, before_count, after_count))
 
-    if DRY_RUN:
-        print("\n[DRY-RUN] Would save these merged permission policies onto the target role:")
-        pprint(merged_policies)
-        return
+    # Show the merge plan and ask you to confirm before saving. If you do not
+    # confirm, nothing is changed.
+    question = format_merge_for_confirm(source_roles, target_role, before_count, after_count)
+    if not ask_to_confirm(question, "Merge Role Permissions"):
+        raise SystemExit("Stopped at your request. The target role was not changed.")
 
     # The SDK's put_authorization_role wants a DomainOrganizationRole body. We
     # start from the TARGET role so we keep its own name and description, then

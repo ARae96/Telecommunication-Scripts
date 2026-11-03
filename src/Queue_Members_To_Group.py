@@ -14,10 +14,11 @@
 # into one list with no repeats, so each person is added to the group only
 # once even if they are in several of the queues.
 #
-# Safety: this script changes Genesys Cloud, so it honors a DRY_RUN flag that
-# defaults to True. While DRY_RUN is True it only reads and prints what it
-# would do, and makes no changes. Set DRY_RUN to False to actually add the
-# members.
+# Safety: this script changes Genesys Cloud, so it always reads first and shows
+# you a summary before it changes anything. It names the group that will receive
+# the users, the number of unique users, and the queues they came from. Then it
+# asks you to confirm in a pop-up dialog (with a typed fallback if the dialog
+# cannot be shown). No members are added unless you confirm.
 #
 # Run locally with:
 #   pip install -r requirements.txt
@@ -32,6 +33,8 @@ import PureCloudPlatformClientV2
 from PureCloudPlatformClientV2.rest import ApiException
 from dotenv import load_dotenv
 
+from confirm_prompt import ask_to_confirm
+
 
 # --- Configuration -----------------------------------------------------------
 # Enter the IDs by hand before running. source_queues is the list of queues we
@@ -39,11 +42,6 @@ from dotenv import load_dotenv
 # is the group we add those users to.
 source_queues = ['']
 new_group = ''
-
-# While DRY_RUN is True the script only reads and prints what it would do. It
-# makes no changes in Genesys Cloud. Set this to False to actually add members
-# to the group.
-DRY_RUN = True
 
 # How many members to ask for on each page when reading the queue. The queue
 # members API returns results one page at a time, so we loop through pages.
@@ -169,12 +167,16 @@ def get_queue_user_ids(routing_api, queue_id):
 
 
 def get_unique_user_ids_across_queues(routing_api, queue_ids):
-    """Return the user IDs across all the queues, with no repeats.
+    """Return the unique user IDs across all the queues and the queue names.
 
     Reads each queue in turn and gathers everyone into one list. A user who is
     in more than one of the queues is kept only once, so the group add later
     does not try to add the same person twice. The list keeps first-seen order,
     so the person found first comes first, which makes the output easy to read.
+
+    Returns a tuple of (unique_user_ids, queue_names). queue_names holds the
+    name of each queue we actually read, in order, so the confirm dialog can
+    list which queues the users came from.
 
     Skips a blank queue ID and prints a per-queue count so you can see where
     the users came from. If one queue read fails it is reported inside
@@ -183,6 +185,7 @@ def get_unique_user_ids_across_queues(routing_api, queue_ids):
     """
     unique_user_ids = []
     seen_user_ids = set()
+    queue_names = []
 
     for queue_id in queue_ids:
         # Skip a blank entry so an empty line in the list does not cause a call
@@ -190,10 +193,11 @@ def get_unique_user_ids_across_queues(routing_api, queue_ids):
         if not queue_id:
             continue
 
-        # Read the queue's name so the output shows which queue these users
-        # came from, not just its ID. This makes it easy to confirm you
-        # entered the right queue.
+        # Read the queue's name so the output and the confirm dialog show which
+        # queue these users came from, not just its ID. This makes it easy to
+        # confirm you entered the right queue.
         queue_name = get_queue_name(routing_api, queue_id)
+        queue_names.append(queue_name)
         queue_user_ids = get_queue_user_ids(routing_api, queue_id)
         print(
             "Queue '%s' (%s) has %d users."
@@ -208,7 +212,7 @@ def get_unique_user_ids_across_queues(routing_api, queue_ids):
                 seen_user_ids.add(user_id)
                 unique_user_ids.append(user_id)
 
-    return unique_user_ids
+    return unique_user_ids, queue_names
 
 
 def split_into_batches(items, batch_size):
@@ -232,21 +236,13 @@ def add_members_to_group(groups_api, group_id, group_name, user_ids):
     sends it. Prints progress for each batch, including the group's name so you
     can confirm it is the group you meant.
 
-    When DRY_RUN is True this makes no changes. It only prints what it would
-    add, with a [DRY-RUN] prefix, so you can check the plan before running for
-    real. If one batch fails it prints the error and keeps going with the next
-    batch, so one bad batch does not stop the whole run.
+    Call this only after the person has confirmed. If one batch fails it prints
+    the error and keeps going with the next batch, so one bad batch does not
+    stop the whole run.
     """
     batches = split_into_batches(user_ids, ADD_BATCH_SIZE)
 
     for batch_number, batch in enumerate(batches, start=1):
-        if DRY_RUN:
-            print(
-                "[DRY-RUN] Would add batch %d of %d (%d members) to group '%s' (%s)"
-                % (batch_number, len(batches), len(batch), group_name, group_id)
-            )
-            continue
-
         body = PureCloudPlatformClientV2.GroupMembersUpdate()
         body.member_ids = batch
 
@@ -258,6 +254,29 @@ def add_members_to_group(groups_api, group_id, group_name, user_ids):
             )
         except ApiException as e:
             print("Exception when calling GroupsApi->post_group_members: %s\n" % e)
+
+
+def format_add_for_confirm(group_name, user_count, queue_names):
+    """Build the confirm message for adding queue users to a group.
+
+    Names the group that will receive the users, the number of unique users,
+    and the queues they came from. Returns one block of text with real new
+    lines, shown in the confirm dialog and the typed fallback.
+    """
+    lines = []
+
+    lines.append("The following group will receive users:")
+    lines.append(group_name)
+
+    lines.append("")
+    lines.append(
+        "A total of %d unique user(s) will be added, from these queue(s):"
+        % user_count
+    )
+    for queue_name in queue_names:
+        lines.append(queue_name)
+
+    return '\n'.join(lines)
 
 
 # --- Main --------------------------------------------------------------------
@@ -285,7 +304,7 @@ def main(source_queue_ids, new_group_id):
 
     routing_api, groups_api = build_apis()
 
-    user_ids = get_unique_user_ids_across_queues(routing_api, source_queue_ids)
+    user_ids, queue_names = get_unique_user_ids_across_queues(routing_api, source_queue_ids)
 
     # Stop if no users came back. This usually means every queue read failed or
     # the queues have no user members, and adding nothing would be a wasted
@@ -299,13 +318,15 @@ def main(source_queue_ids, new_group_id):
 
     print("Found %d unique users across all queues." % len(user_ids))
 
-    # Read the group's name so the dry-run (and the real run) show which group
-    # these users would be added to, not just its ID.
+    # Read the group's name so the summary shows which group these users would
+    # be added to, not just its ID.
     group_name = get_group_name(groups_api, new_group_id)
 
-    if DRY_RUN:
-        print("DRY_RUN is True, so no members will actually be added. Set "
-              "DRY_RUN to False to add them for real.")
+    # Show the plan and ask you to confirm before adding anyone. If you do not
+    # confirm, no members are added.
+    question = format_add_for_confirm(group_name, len(user_ids), queue_names)
+    if not ask_to_confirm(question, "Copy Queue Members Into a Group"):
+        raise SystemExit("Stopped at your request. No members were added.")
 
     add_members_to_group(groups_api, new_group_id, group_name, user_ids)
     print('Done.')

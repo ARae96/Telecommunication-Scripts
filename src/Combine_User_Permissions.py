@@ -44,11 +44,13 @@
 # at the end of the run, so you have a clean list of permissions to remove from
 # the source roles by hand.
 #
-# Safety: this script changes a Genesys role, so it uses a DRY_RUN flag that
-# defaults to True. On a dry run it only reads and prints the policies it would
-# write, each line marked with a [DRY-RUN] prefix. Set DRY_RUN to False to
-# actually write the change to the target role. Leave it True until you have
-# reviewed the dry-run output.
+# Safety: this script changes a Genesys role, so it always reads first and shows
+# you a summary before it changes anything. It names the user whose roles are
+# combined, the target role the permissions are written onto, and how many
+# permission policies will be written after the baseline permissions are
+# removed. Then it asks you to confirm in a pop-up dialog (with a typed fallback
+# if the dialog cannot be shown). The target role is not changed unless you
+# confirm.
 #
 # Run locally with:
 #   pip install -r requirements.txt
@@ -64,6 +66,8 @@ import re
 import PureCloudPlatformClientV2
 from PureCloudPlatformClientV2.rest import ApiException
 from dotenv import load_dotenv
+
+from confirm_prompt import ask_to_confirm
 
 
 # --- Configuration -----------------------------------------------------------
@@ -91,13 +95,6 @@ new_role = '84f1296f-2ced-47e8-9c5d-8c98ba62659d'
 # permissions are ever retired, so the real number of retries is small.
 MAX_WRITE_RETRIES = 50
 
-# Safety switch. While this is True the script only reads and prints what it
-# would write, and makes no change in Genesys. Set it to False to actually
-# write the merged policies onto the target role. Leave it True until you have
-# reviewed the dry-run output.
-DRY_RUN = False
-
-
 # --- Authentication ----------------------------------------------------------
 def build_apis():
     """Sign in to Genesys Cloud and return the API client this script needs.
@@ -105,8 +102,10 @@ def build_apis():
     Reads GENESYS_CLOUD_CLIENT_ID and GENESYS_CLOUD_CLIENT_SECRET from the .env
     file at the workspace root (one folder up from this script). Stops the
     script with a helpful message if either value is missing. Returns the
-    AuthorizationApi client, which covers both reading roles and updating a
-    role.
+    AuthorizationApi client (which covers both reading roles and updating a
+    role) and the UsersApi client (used only to read the source user's name for
+    the confirm summary). Returns them in this order: (AuthorizationApi,
+    UsersApi).
     """
     load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '.env'))
     client_id = os.environ.get('GENESYS_CLOUD_CLIENT_ID')
@@ -122,7 +121,10 @@ def build_apis():
     apiclient = PureCloudPlatformClientV2.api_client.ApiClient().get_client_credentials_token(
         client_id, client_secret
     )
-    return PureCloudPlatformClientV2.AuthorizationApi(apiclient)
+    return (
+        PureCloudPlatformClientV2.AuthorizationApi(apiclient),
+        PureCloudPlatformClientV2.UsersApi(apiclient),
+    )
 
 
 # --- Helpers -----------------------------------------------------------------
@@ -418,10 +420,10 @@ def update_target_role(authorization_api, role_id, merged_policies):
     doing this until the write succeeds or there is nothing left to drop, so
     one dead action does not sink the whole run.
 
-    Prints what it would do and makes no change when DRY_RUN is True. Returns a
-    list of (domain, entity_name, action) tuples for every action it had to
-    drop to get the write to succeed, so the caller can print a cleanup list at
-    the end. Returns an empty list when nothing had to be dropped.
+    Call this only after the person has confirmed. Returns a list of (domain,
+    entity_name, action) tuples for every action it had to drop to get the write
+    to succeed, so the caller can print a cleanup list at the end. Returns an
+    empty list when nothing had to be dropped.
     """
     dropped_permissions = []
 
@@ -435,17 +437,6 @@ def update_target_role(authorization_api, role_id, merged_policies):
 
     role_name = getattr(target_role, 'name', None)
     role_description = getattr(target_role, 'description', None)
-
-    if DRY_RUN:
-        print("[DRY-RUN] Would set %d permission policy(ies) on role '%s' (%s):"
-              % (len(merged_policies), role_name, role_id))
-        for policy in merged_policies:
-            domain = getattr(policy, 'domain', None)
-            entity_name = getattr(policy, 'entity_name', None)
-            actions = getattr(policy, 'action_set', None) or []
-            print("            %s / %s -> actions: %s"
-                  % (domain, entity_name, ', '.join(actions)))
-        return dropped_permissions
 
     body = PureCloudPlatformClientV2.DomainOrganizationRoleUpdate()
     body.name = role_name
@@ -499,6 +490,73 @@ def update_target_role(authorization_api, role_id, merged_policies):
     return dropped_permissions
 
 
+def get_user_name(users_api, user_id):
+    """Return a user's display name, or a fallback label if we cannot read it.
+
+    We show this name in the confirm dialog so you can check you picked the
+    right person. If the read fails we return a short "(name unavailable)" label
+    instead of stopping, because a missing name should not block the summary.
+    """
+    try:
+        user = users_api.get_user(user_id)
+    except ApiException as e:
+        print("Could not read user name for %s: %s" % (user_id, e))
+        return "(name unavailable)"
+    return getattr(user, 'name', None) or "(name unavailable)"
+
+
+def get_role_name(authorization_api, role_id):
+    """Return a role's name, or a fallback label if we cannot read it.
+
+    We show this name in the confirm dialog so you can check you picked the
+    right target role. If the read fails we return a short "(name unavailable)"
+    label instead of stopping, because a missing name should not block the
+    summary.
+    """
+    try:
+        role = authorization_api.get_authorization_role(role_id)
+    except ApiException as e:
+        print("Could not read role name for %s: %s" % (role_id, e))
+        return "(name unavailable)"
+    return getattr(role, 'name', None) or "(name unavailable)"
+
+
+def format_combine_for_confirm(source_user_name, target_role_name, role_count, policy_count):
+    """Build the confirm message that describes the permission roll-up.
+
+    Names the user whose roles are combined, the target role the permissions are
+    written onto, and how many permission policies will be written after the
+    baseline permissions are removed. Returns one block of text with real new
+    lines, shown in the confirm dialog and the typed fallback.
+    """
+    lines = []
+
+    lines.append("This will write combined permissions onto one role.")
+
+    lines.append("")
+    lines.append("Copy permissions FROM this user's roles:")
+    lines.append(source_user_name)
+
+    lines.append("")
+    lines.append("Write them ONTO this role:")
+    lines.append(target_role_name)
+
+    lines.append("")
+    lines.append(
+        "The user's %d role(s) were merged, then baseline permissions were "
+        "removed, leaving %d permission policy(ies) to write."
+        % (role_count, policy_count)
+    )
+
+    lines.append("")
+    lines.append(
+        "Please note: this REPLACES the target role's permissions with the set "
+        "above."
+    )
+
+    return '\n'.join(lines)
+
+
 # --- Main --------------------------------------------------------------------
 def main():
     """Roll up the source user's role permissions onto the target role.
@@ -514,14 +572,11 @@ def main():
             rejects any retired actions, drop them and retry, then print a
             summary of everything dropped so you can clean up the source roles.
 
-    While DRY_RUN is True this only reads and prints the policies it would
-    write. The reads still run, so the dry-run output shows exactly what would
-    be applied.
+    The reads run first, and the script shows a summary and asks you to confirm
+    before Step 5. If you do not confirm, the target role is left alone and
+    nothing is written.
     """
-    authorization_api = build_apis()
-
-    if DRY_RUN:
-        print("DRY_RUN is True: reading only, no changes will be made in Genesys.\n")
+    authorization_api, users_api = build_apis()
 
     # Step 1: read the source user's roles.
     source_role_ids = get_source_role_ids(authorization_api, source_user)
@@ -563,6 +618,16 @@ def main():
             "Every permission was removed by the blacklist, so there is nothing "
             "to write. Check ROLE_BLACKLIST against the source user's roles."
         )
+
+    # Show the plan and ask you to confirm before writing. Everything above was
+    # read-only, so stopping here leaves the target role exactly as it was.
+    source_user_name = get_user_name(users_api, source_user)
+    target_role_name = get_role_name(authorization_api, new_role)
+    question = format_combine_for_confirm(
+        source_user_name, target_role_name, len(source_role_ids), len(kept_policies)
+    )
+    if not ask_to_confirm(question, "Combine User Permissions Onto a Role"):
+        raise SystemExit("Stopped at your request. The target role was not changed.")
 
     # Step 5: write the subtracted set onto the target role. This drops any
     # retired actions Genesys rejects and returns the list of what it dropped.

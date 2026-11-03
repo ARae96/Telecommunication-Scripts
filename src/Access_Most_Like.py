@@ -47,9 +47,14 @@
 #   joins the API accepted, and warns about any it did not, instead of assuming
 #   they all worked.
 #
-# Safety: this script changes Genesys, so it uses a DRY_RUN flag that defaults
-# to True. On a dry run it only reads and prints the changes it would make, each
-# marked with a [DRY-RUN] prefix. Set DRY_RUN = False to actually apply them.
+# Safety: this script changes Genesys, so it always reads the aml first and
+# shows you a summary before it changes anything. The summary names the person
+# it copies from and the person it copies onto, and counts what will be applied
+# (home division, groups, roles, skills, queues, utilization). Then it asks you
+# to confirm in a pop-up dialog (with a typed fallback if the dialog cannot be
+# shown). Nothing on the target is changed unless you confirm. Please remember
+# this REPLACES the target's access, so anything they have that the aml does
+# not have is removed once you confirm.
 #
 # Run locally with:
 #   pip install -r requirements.txt
@@ -64,6 +69,8 @@ import PureCloudPlatformClientV2
 from PureCloudPlatformClientV2.rest import ApiException
 from dotenv import load_dotenv
 
+from confirm_prompt import ask_to_confirm
+
 
 # --- Configuration -----------------------------------------------------------
 # Enter the two user IDs by hand before running. "aml" is the person whose
@@ -71,11 +78,6 @@ from dotenv import load_dotenv
 # make match the aml (a new hire or an internal transfer).
 aml = 'fdbef2f8-cf78-4aac-b282-676f2cfcc006'
 target = '2d2883ee-456a-4433-8977-20e8eaec7ae3'
-
-# Safety switch. While this is True the script only reads and prints what it
-# would do, and makes no change in Genesys. Set it to False to actually apply
-# the changes. Leave it True until you have reviewed the dry-run output.
-DRY_RUN = False
 
 # The object type the division-assign API expects when we move a user into a
 # division. The API accepts several object types; we only ever move users.
@@ -280,15 +282,11 @@ def set_home_division(authorization_api, user_id, division_id):
     single move rather than a clear-then-set.
 
     Does nothing if division_id is empty, so a failed read of the aml's division
-    never moves the target by mistake. Prints what it does. Makes no change and
-    prints a note if DRY_RUN is True. Prints a message if the call fails.
+    never moves the target by mistake. Prints what it does. Prints a message if
+    the call fails. Call this only after the person has confirmed.
     """
     if not division_id:
         print("No home division found on the aml, so the target's home division was left alone.")
-        return
-
-    if DRY_RUN:
-        print("[DRY-RUN] Would move %s into home division %s" % (user_id, division_id))
         return
 
     try:
@@ -308,13 +306,10 @@ def remove_from_groups(groups_api, user_id, group_ids):
     of user IDs, and we pass just this one person each time. We catch errors per
     group and keep going, so one group that fails does not stop the rest.
 
-    Prints what it does for each group. Makes no change and prints a note for
-    each group if DRY_RUN is True.
+    Prints what it does for each group. Call this only after the person has
+    confirmed.
     """
     for group_id in group_ids:
-        if DRY_RUN:
-            print("[DRY-RUN] Would remove %s from group %s" % (user_id, group_id))
-            continue
         try:
             groups_api.delete_group_members(group_id, user_id)
             print("Removed %s from group %s" % (user_id, group_id))
@@ -329,14 +324,10 @@ def unjoin_queues(users_api, user_id, queue_ids):
     join API takes a list of UserQueue entries, each with a queue ID and a
     joined flag; we set joined to False for every queue the person is in now.
 
-    Prints what it does. Makes no change and prints a note if DRY_RUN is True.
-    Prints a message if the call fails. Does nothing if the list is empty.
+    Prints what it does. Prints a message if the call fails. Does nothing if the
+    list is empty. Call this only after the person has confirmed.
     """
     if not queue_ids:
-        return
-
-    if DRY_RUN:
-        print("[DRY-RUN] Would unjoin %s from %d queue(s)" % (user_id, len(queue_ids)))
         return
 
     body = []
@@ -363,13 +354,10 @@ def add_to_groups(groups_api, user_id, group_ids):
     this script.
 
     We catch errors per group and keep going, so one group that fails does not
-    stop the rest. Prints what it does for each group. Makes no change and
-    prints a note for each group if DRY_RUN is True.
+    stop the rest. Prints what it does for each group. Call this only after the
+    person has confirmed.
     """
     for group_id in group_ids:
-        if DRY_RUN:
-            print("[DRY-RUN] Would add %s to group %s" % (user_id, group_id))
-            continue
         try:
             # Read the group first so we have its current version for the add.
             group = groups_api.get_group(group_id)
@@ -393,15 +381,9 @@ def apply_role_division_pairs(authorization_api, user_id, role_division_pairs):
     ones, and we do not need a separate clear step. An empty list would clear
     the person's direct roles.
 
-    Prints what it does. Makes no change and prints a note if DRY_RUN is True.
-    Prints a message and makes no change if the call fails.
+    Prints what it does. Prints a message and makes no change if the call fails.
+    Call this only after the person has confirmed.
     """
-    if DRY_RUN:
-        print("[DRY-RUN] Would set %d direct role grant(s) on %s:" % (len(role_division_pairs), user_id))
-        for role_id, division_id in role_division_pairs:
-            print("            role %s in division %s" % (role_id, division_id))
-        return
-
     pairs = []
     for role_id, division_id in role_division_pairs:
         pair = PureCloudPlatformClientV2.RoleDivisionPair()
@@ -428,15 +410,9 @@ def apply_skills(users_api, user_id, skill_pairs):
     the target's old skills and sets the new ones. An empty list clears the
     person's skills.
 
-    Prints what it does. Makes no change and prints a note if DRY_RUN is True.
-    Prints a message and makes no change if the call fails.
+    Prints what it does. Prints a message and makes no change if the call fails.
+    Call this only after the person has confirmed.
     """
-    if DRY_RUN:
-        print("[DRY-RUN] Would set %d skill(s) on %s:" % (len(skill_pairs), user_id))
-        for skill_id, proficiency in skill_pairs:
-            print("            skill %s at proficiency %s" % (skill_id, proficiency))
-        return
-
     body = []
     for skill_id, proficiency in skill_pairs:
         skill = PureCloudPlatformClientV2.UserRoutingSkillPost()
@@ -465,15 +441,11 @@ def join_queues(users_api, user_id, queue_ids):
     the call we read the target's queues back and warn about any requested queue
     that did not take, instead of assuming every join worked.
 
-    Prints what it does. Makes no change and prints a note if DRY_RUN is True.
-    Prints a message if the call fails. Does nothing if the list is empty.
+    Prints what it does. Prints a message if the call fails. Does nothing if the
+    list is empty. Call this only after the person has confirmed.
     """
     if not queue_ids:
         print("The aml is in no queues, so no queues were joined for the target.")
-        return
-
-    if DRY_RUN:
-        print("[DRY-RUN] Would join %s to %d queue(s)" % (user_id, len(queue_ids)))
         return
 
     body = []
@@ -527,14 +499,11 @@ def apply_utilization(routing_api, user_id, aml_utilization):
     old custom settings in place when the aml is on the default would leave them
     out of sync, which is the opposite of what this script is for.
 
-    Prints what it does. Makes no change and prints a note if DRY_RUN is True.
-    Prints a message and makes no change if the call fails.
+    Prints what it does. Prints a message and makes no change if the call fails.
+    Call this only after the person has confirmed.
     """
     # Case 2: the aml is on the org default, so reset the target to the default.
     if aml_utilization is None:
-        if DRY_RUN:
-            print("[DRY-RUN] Would reset %s to the org default utilization" % user_id)
-            return
         try:
             routing_api.delete_routing_user_utilization(user_id)
             print("Reset %s to the org default utilization" % user_id)
@@ -543,10 +512,6 @@ def apply_utilization(routing_api, user_id, aml_utilization):
         return
 
     # Case 1: the aml has custom utilization, so copy it onto the target.
-    if DRY_RUN:
-        print("[DRY-RUN] Would copy the aml's custom utilization onto %s" % user_id)
-        return
-
     body = PureCloudPlatformClientV2.UtilizationRequest()
     body.utilization = getattr(aml_utilization, 'utilization', None)
     body.max_inbound_calls = getattr(aml_utilization, 'max_inbound_calls', None)
@@ -569,6 +534,81 @@ def apply_utilization(routing_api, user_id, aml_utilization):
         print("Copied the aml's custom utilization onto %s" % user_id)
     except ApiException as e:
         print("Exception when calling RoutingApi->put_routing_user_utilization: %s\n" % e)
+
+
+def get_user_name(users_api, user_id):
+    """Return a user's display name, or a fallback label if we cannot read it.
+
+    We show this name in the confirm dialog so you can check you picked the
+    right people. If the read fails we return a short "(name unavailable)" label
+    instead of stopping, because a missing name should not block the summary.
+    """
+    try:
+        user = users_api.get_user(user_id)
+    except ApiException as e:
+        print("Could not read user name for %s: %s" % (user_id, e))
+        return "(name unavailable)"
+    return getattr(user, 'name', None) or "(name unavailable)"
+
+
+def get_division_name(authorization_api, division_id):
+    """Return a division's name, or a fallback label if we cannot read it.
+
+    We show this name in the confirm dialog so the home division reads as a name
+    instead of an ID. Returns "none" when there is no division to look up. If
+    the read fails we return a short "(name unavailable)" label instead of
+    stopping, because a missing name should not block the summary.
+    """
+    if not division_id:
+        return "none"
+    try:
+        division = authorization_api.get_authorization_division(division_id)
+    except ApiException as e:
+        print("Could not read division name for %s: %s" % (division_id, e))
+        return "(name unavailable)"
+    return getattr(division, 'name', None) or "(name unavailable)"
+
+
+def format_aml_for_confirm(aml_name, target_name, home_division_name,
+                           group_count, role_count, skill_count, queue_count,
+                           has_custom_utilization):
+    """Build the confirm message that describes the access copy.
+
+    Names the person the access is copied from (the aml) and the person it is
+    copied onto (the target), then counts what will be applied: home division,
+    groups, roles, skills, queues, and whether utilization is custom or the org
+    default. Ends with the plain warning that this replaces the target's current
+    access. Returns one block of text with real new lines, shown in the confirm
+    dialog and the typed fallback.
+    """
+    lines = []
+
+    lines.append("This will make one user's access match another user's exactly.")
+
+    lines.append("")
+    lines.append("Copy access FROM (aml):")
+    lines.append(aml_name)
+
+    lines.append("")
+    lines.append("Apply it TO (target):")
+    lines.append(target_name)
+
+    lines.append("")
+    lines.append("The target will be changed to match the aml:")
+    lines.append("   - Home division: %s" % home_division_name)
+    lines.append("   - %d group(s)" % group_count)
+    lines.append("   - %d direct role grant(s)" % role_count)
+    lines.append("   - %d skill(s)" % skill_count)
+    lines.append("   - %d queue(s)" % queue_count)
+    lines.append("   - Utilization: %s" % ("custom" if has_custom_utilization else "org default"))
+
+    lines.append("")
+    lines.append(
+        "Please note: this REPLACES the target's current access. Anything the "
+        "target has now that the aml does not have will be removed."
+    )
+
+    return '\n'.join(lines)
 
 
 # --- Main --------------------------------------------------------------------
@@ -598,9 +638,9 @@ def main(aml_id, target_id):
             the target to the default too. This step is independent of the
             others.
 
-    While DRY_RUN is True this only reads and prints the changes it would make.
-    The reads in Step A still run, so the dry-run output shows exactly what
-    would be applied.
+    The reads in Step A run first, and the script shows a summary and asks you
+    to confirm before Step 1. If you do not confirm, the target is left alone
+    and nothing is changed.
     """
     # Stop early if either ID is blank. Without this, a blank ID would fail
     # later at the API call with a confusing error instead of a clear one.
@@ -611,9 +651,6 @@ def main(aml_id, target_id):
         )
 
     authorization_api, users_api, groups_api, routing_api = build_apis()
-
-    if DRY_RUN:
-        print("DRY_RUN is True: reading only, no changes will be made in Genesys.\n")
 
     # Step A: read everything from the aml first (read-only). Doing this before
     # we wipe the target means a bad aml ID or a failed read never leaves the
@@ -649,6 +686,20 @@ def main(aml_id, target_id):
             "the target was left alone. Check the 'aml' user ID and that the "
             "reads above did not fail."
         )
+
+    # Show the plan and ask you to confirm before any change. Everything above
+    # was read-only, so stopping here leaves the target exactly as it was.
+    aml_name = get_user_name(users_api, aml_id)
+    target_name = get_user_name(users_api, target_id)
+    home_division_name = get_division_name(authorization_api, aml_home_division_id)
+    question = format_aml_for_confirm(
+        aml_name, target_name, home_division_name,
+        len(aml_group_ids), len(aml_role_division_pairs),
+        len(aml_skill_pairs), len(aml_queue_ids),
+        aml_utilization is not None,
+    )
+    if not ask_to_confirm(question, "Access Most Like"):
+        raise SystemExit("Stopped at your request. The target was not changed.")
 
     # Step 1: clean slate for the target. We only need to clear groups and
     # queues here. Roles and skills are cleared by their apply steps below,
@@ -690,10 +741,7 @@ def main(aml_id, target_id):
     # order does not matter; it runs last to keep the flow tidy.
     apply_utilization(routing_api, target_id, aml_utilization)
 
-    if DRY_RUN:
-        print("\n[DRY-RUN] Done. No changes were made. Set DRY_RUN = False to apply.")
-    else:
-        print("\nAML Completed")
+    print("\nAML Completed")
 
 
 if __name__ == '__main__':

@@ -41,11 +41,12 @@
 # finds none, or more than one, it stops and changes nothing, because guessing
 # could break the flow.
 #
-# Safety: this script changes live Genesys Cloud flows, so it honors a DRY_RUN
-# flag that defaults to True. While DRY_RUN is True it only reads: it checks out
-# and exports each flow, shows you the old expression and the new one it would
-# write, and then stops without importing or publishing. Set DRY_RUN to False
-# only once the preview looks right.
+# Safety: this script changes live Genesys Cloud flows, so it always reads first
+# and shows you a summary before it changes anything. It checks out and exports
+# each flow (both read-only), prints the old and new expression for each, then
+# shows you the holidays being written and the flows that will be published.
+# Then it asks you to confirm in a pop-up dialog (with a typed fallback if the
+# dialog cannot be shown). No flow is imported or published unless you confirm.
 #
 # Run locally with:
 #   pip install -r requirements.txt
@@ -62,6 +63,8 @@ import urllib.request
 import PureCloudPlatformClientV2
 from PureCloudPlatformClientV2.rest import ApiException
 from dotenv import load_dotenv
+
+from confirm_prompt import ask_to_confirm
 
 
 # --- Configuration -----------------------------------------------------------
@@ -101,12 +104,6 @@ HOLIDAYS = [
     {'name': 'Day After Thanksgiving',     'start': (2026, 11, 27), 'end': (2026, 11, 28), 'utc_offset': -7},
     {'name': 'Christmas',                  'start': (2026, 12, 24), 'end': (2026, 12, 26), 'utc_offset': -7},
 ]
-
-# While DRY_RUN is True the script only reads. It checks out and exports each
-# flow, prints the old and new expression, and stops before importing or
-# publishing. No flow is changed. Set this to False to actually write the new
-# expression and publish.
-DRY_RUN = True
 
 # A long-running Architect job (export or import) is not finished the instant
 # we start it, so we ask for its status over and over until it reaches a final
@@ -430,44 +427,83 @@ def import_flow_yaml(architect_api, flow_yaml):
     return wait_for_import_job(architect_api, import_response.id)
 
 
-def update_one_flow(architect_api, flow_id, new_expression):
-    """Update the holiday expression in one flow, then publish it.
+def get_flow_name(architect_api, flow_id):
+    """Return a flow's name, or a fallback label if we cannot read it.
 
-    Step 1: Check out the flow so we are allowed to change it.
-    Step 2: Export the flow to YAML and find its one holiday expression.
-    Step 3: Show the old and new expression so you can see the change.
-    Step 4: If DRY_RUN is True, stop here and change nothing.
-    Step 5: Swap the old expression for the new one, import the edited YAML, and
-            publish the flow so the change goes live.
+    We show this name in the preview and the confirm dialog so you can check you
+    picked the right flows. If the read fails we return a short "(name
+    unavailable)" label instead of stopping, because a missing name should not
+    block the preview.
+    """
+    try:
+        flow = architect_api.get_flow(flow_id)
+    except ApiException as e:
+        print("Could not read flow name for %s: %s" % (flow_id, e))
+        return "(name unavailable)"
+    return getattr(flow, 'name', None) or "(name unavailable)"
 
-    Catches its own errors and returns True on success or False on failure, so
-    one bad flow does not stop the script from trying the rest of the list.
+
+def prepare_flow_update(architect_api, flow_id, new_expression):
+    """Read one flow and work out the edit, without changing the live flow.
+
+    Step 1: Read the flow's name so the preview can show it.
+    Step 2: Check out the flow. This is the API version of opening the flow for
+            editing in the UI, and it is what lets a later import land on this
+            flow. Checkout does not change the live flow, so it is safe to do
+            before you confirm.
+    Step 3: Export the flow to YAML, find its one holiday expression, and build
+            the edited YAML that swaps in the new expression.
+
+    Returns a dictionary describing the planned edit:
+      {"flow_id", "flow_name", "updated_yaml"}
+    Prints the old and new expression so you can see the change. Catches its own
+    errors and returns None on failure, so one bad flow does not stop the script
+    from reading the rest.
     """
     print("\n--- Flow %s ---" % flow_id)
 
     try:
-        # Check out the flow first. This is the API version of opening the flow
-        # for editing in the UI, and it is what lets the later import land on
-        # this flow. We do this even in a dry run so the preview matches what a
-        # real run would see.
+        flow_name = get_flow_name(architect_api, flow_id)
         architect_api.post_flows_actions_checkout(flow_id)
 
         flow_yaml = export_flow_yaml(architect_api, flow_id)
         old_expression = find_existing_expression(flow_yaml)
 
-        print("Old expression found in flow:")
+        print("Flow '%s' old expression:" % flow_name)
         print(old_expression)
         print("\nNew expression that would be written:")
         print(new_expression)
 
-        if DRY_RUN:
-            print("\n[DRY-RUN] Not importing or publishing. Set DRY_RUN to False "
-                  "to apply this change.")
-            return True
-
         updated_yaml = replace_expression_in_yaml(flow_yaml, old_expression, new_expression)
 
-        import_flow_yaml(architect_api, updated_yaml)
+        return {
+            "flow_id": flow_id,
+            "flow_name": flow_name,
+            "updated_yaml": updated_yaml,
+        }
+
+    except (ApiException, RuntimeError) as e:
+        # Report this flow's failure and keep going. Returning None leaves it
+        # out of the plan so it is not shown in the confirm or published.
+        print("Could not prepare flow %s: %s" % (flow_id, e))
+        print("This flow was left as-is. Check it in the Architect UI.")
+        return None
+
+
+def import_and_publish_flow(architect_api, plan):
+    """Import the edited YAML for one flow and publish it. Call this after confirm.
+
+    plan is one of the dictionaries that prepare_flow_update returns. This
+    imports the edited YAML onto the same flow, then publishes it so the change
+    goes live. Catches its own errors and returns True on success or False on
+    failure, so one bad flow does not stop the rest.
+    """
+    flow_id = plan["flow_id"]
+    flow_name = plan["flow_name"]
+    print("\n--- Flow '%s' (%s) ---" % (flow_name, flow_id))
+
+    try:
+        import_flow_yaml(architect_api, plan["updated_yaml"])
         print("Imported the edited flow.")
 
         # Publishing is what makes the change live for callers. Importing alone
@@ -477,11 +513,42 @@ def update_one_flow(architect_api, flow_id, new_expression):
         return True
 
     except (ApiException, RuntimeError) as e:
-        # Report this flow's failure and keep going. We return False so the
-        # summary at the end can tell you which flows did not update.
         print("Failed to update flow %s: %s" % (flow_id, e))
         print("This flow was left as-is. Check it in the Architect UI.")
         return False
+
+
+def format_holidays_for_confirm(plans, holidays):
+    """Build the confirm message: the holidays to write, then the flows to publish.
+
+    plans is the list of flow plans that prepared cleanly. holidays is the
+    HOLIDAYS list, used only for its names. Returns one block of text with real
+    new lines, shown in the confirm dialog and the typed fallback.
+    """
+    lines = []
+
+    lines.append(
+        "This will update the holiday closure decision in %d flow(s) and publish "
+        "them live." % len(plans)
+    )
+
+    lines.append("")
+    lines.append("The following holidays will be written:")
+    for holiday in holidays:
+        lines.append(holiday["name"])
+
+    lines.append("")
+    lines.append("Flows to update:")
+    for plan in plans:
+        lines.append(plan["flow_name"])
+
+    lines.append("")
+    lines.append(
+        "Note: Apply re-imports and publishes each flow above, so the change "
+        "goes live in Genesys Cloud right away."
+    )
+
+    return '\n'.join(lines)
 
 
 # --- Main --------------------------------------------------------------------
@@ -493,9 +560,12 @@ def main(flow_ids, holidays):
     Step 2: Build the new holiday expression once from the holiday list, since
             every flow gets the same expression.
     Step 3: Sign in to Genesys Cloud.
-    Step 4: Update each flow in turn, keeping count of which succeeded and which
-            failed, so one bad flow does not stop the others.
-    Step 5: Print a short summary so you can see the result at a glance.
+    Step 4: Read and prepare every flow (check out, export, build the edited
+            YAML). This is all read-only; the live flows are not changed yet.
+    Step 5: Show the plan and ask you to confirm. If you do not confirm, stop
+            before importing or publishing anything.
+    Step 6: Import and publish each prepared flow.
+    Step 7: Print a short summary so you can see the result at a glance.
     """
     # Keep only the flow IDs that are actually filled in, so a leftover blank or
     # the placeholder line does not cause a pointless call that would fail.
@@ -512,23 +582,38 @@ def main(flow_ids, holidays):
 
     new_expression = build_holiday_expression(holidays)
 
-    if DRY_RUN:
-        print("DRY_RUN is True, so no flow will be changed. You will see the old "
-              "and new expression for each flow, then the script will stop "
-              "before importing or publishing.")
-
     architect_api = build_apis()
 
+    # Step 4: prepare every flow (read-only). A flow that fails to prepare
+    # returns None and is left out of the plan.
+    plans = []
+    for flow_id in real_flow_ids:
+        plan = prepare_flow_update(architect_api, flow_id, new_expression)
+        if plan is not None:
+            plans.append(plan)
+
+    if not plans:
+        print("\nNo flow could be prepared, so there is nothing to change. "
+              "Check the errors above.")
+        return
+
+    # Step 5: show the plan and ask you to confirm. Everything above was
+    # read-only, so stopping here leaves every flow exactly as it was.
+    question = format_holidays_for_confirm(plans, holidays)
+    if not ask_to_confirm(question, "Update Service Ops Holiday Decision"):
+        raise SystemExit("Stopped at your request. No flow was imported or published.")
+
+    # Step 6: import and publish each prepared flow.
     succeeded = 0
     failed = 0
-    for flow_id in real_flow_ids:
-        if update_one_flow(architect_api, flow_id, new_expression):
+    for plan in plans:
+        if import_and_publish_flow(architect_api, plan):
             succeeded += 1
         else:
             failed += 1
 
     print("\nDone. %d flow(s) succeeded, %d flow(s) failed, out of %d."
-          % (succeeded, failed, len(real_flow_ids)))
+          % (succeeded, failed, len(plans)))
 
 
 if __name__ == '__main__':

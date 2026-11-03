@@ -19,9 +19,16 @@
 #   role_migration_multi_division_<ts>.csv
 #      One row per skipped user, listing the extra divisions they hold roles in.
 #
-# Safety: DRY_RUN is True by default. In dry-run mode the script only reads data
-# and prints what it would change. It makes no changes until you set DRY_RUN to
-# False. Fill in old_role_id and new_role_id before you run it.
+# Safety: the script always reads first and shows you a summary before it
+# changes anything. It names the old and new role, how many users will be
+# migrated, and how many were skipped for holding roles in more than one
+# division. Then it asks you to confirm in a pop-up dialog (with a typed
+# fallback if the dialog cannot be shown). Nothing is granted or removed unless
+# you confirm. Fill in old_role_id and new_role_id before you run it.
+#
+# Even after you confirm, the old role is removed only after the script checks
+# that every migrated user already has the new role. If that check fails, it
+# stops before removing anything.
 #
 # Local runs need `pip install -r requirements.txt` and a populated .env with
 # GENESYS_CLOUD_CLIENT_ID and GENESYS_CLOUD_CLIENT_SECRET.
@@ -34,6 +41,8 @@ import PureCloudPlatformClientV2
 from PureCloudPlatformClientV2.rest import ApiException
 from pprint import pprint
 from dotenv import load_dotenv
+
+from confirm_prompt import ask_to_confirm
 
 
 # --- Configuration ---------------------------------------------------------
@@ -55,9 +64,6 @@ DIVISION_IDS = [
 # whether a user holds roles outside their home division. If we did not ignore
 # it, every user would look multi-division and get skipped by mistake.
 SHARED_DIVISION_ID = 'df1b7ef4-744c-4b47-8aad-9dc6b2ecb9e0'
-
-# When True, perform reads only and print intended changes without applying them.
-DRY_RUN = True
 
 PAGE_SIZE = 100
 
@@ -263,12 +269,11 @@ def match_users_by_division(auth_api, users_api, user_ids):
 
 
 def grant_new_role(auth_api, matched):
-    """Step 3: grant the new role to each matched user, scoped to their division."""
+    """Step 3: grant the new role to each matched user, scoped to their division.
+
+    Call this only after the person has confirmed.
+    """
     for uid, division in matched.items():
-        if DRY_RUN:
-            print("[DRY-RUN] Would grant new role in division %s (%s) to %s"
-                  % (division["division_id"], division["division_name"], uid))
-            continue
         try:
             # Genesys API call: AuthorizationApi.post_authorization_subject_bulkadd
             # - grants the new role to one user, scoped to their division.
@@ -278,8 +283,7 @@ def grant_new_role(auth_api, matched):
         except ApiException as e:
             print("Failed to grant role to %s: %s" % (uid, e))
 
-    verb = "Would grant" if DRY_RUN else "Granted"
-    print("\n%s the new role (with division) to %d user(s)." % (verb, len(matched)))
+    print("\nGranted the new role (with division) to %d user(s)." % len(matched))
 
 
 def _grant_body(division_id):
@@ -297,10 +301,6 @@ def _grant_body(division_id):
 
 def confirm_migration(auth_api, target_ids):
     """Step 4: verify all target users now have the new role; stop if any don't."""
-    if DRY_RUN:
-        print("\n[DRY-RUN] Skipping confirmation (no changes were made).")
-        return
-
     time.sleep(5)  # allow the role assignment to propagate
     try:
         new_users = set(get_role_user_ids(auth_api, new_role_id))
@@ -322,10 +322,6 @@ def remove_old_role(auth_api, target_ids):
     if not target_ids:
         print("No matching users to remove from the old role.")
         return
-    if DRY_RUN:
-        print("\n[DRY-RUN] Would remove %d user(s) from the old role:" % len(target_ids))
-        pprint(target_ids)
-        return
     try:
         # Genesys API call: AuthorizationApi.put_authorization_role_users_remove
         # - removes the matched users from the old role.
@@ -333,6 +329,56 @@ def remove_old_role(auth_api, target_ids):
         print("Removed %d user(s) from the old role." % len(target_ids))
     except ApiException as e:
         raise SystemExit("Failed to remove users from the old role: %s" % e)
+
+
+def get_role_name(auth_api, role_id):
+    """Return a role's name, or a fallback label if we cannot read it.
+
+    We show this name in the confirm dialog so you can check you picked the
+    right role. If the read fails we return a short "(name unavailable)" label
+    instead of stopping, because a missing name should not block the summary.
+    """
+    try:
+        role = auth_api.get_authorization_role(role_id)
+    except ApiException as e:
+        print("Could not read role name for %s: %s" % (role_id, e))
+        return "(name unavailable)"
+    return getattr(role, 'name', None) or "(name unavailable)"
+
+
+def format_migration_for_confirm(migrate_count, skipped_count, old_role_name, new_role_name):
+    """Build the confirm message that describes the role migration.
+
+    Names the old role (removed) and the new role (granted), how many users will
+    be migrated, and how many were skipped for holding roles in more than one
+    division. The skipped paragraph is left out when no one was skipped, so the
+    message never mentions a CSV that was not written. Returns one block of text
+    with real new lines, shown in the confirm dialog and the typed fallback.
+    """
+    lines = []
+
+    lines.append("You are migrating %d user(s) to a new role." % migrate_count)
+
+    lines.append("")
+    lines.append("The removed role is:")
+    lines.append(old_role_name)
+
+    lines.append("")
+    lines.append("The new role is:")
+    lines.append(new_role_name)
+
+    if skipped_count:
+        lines.append("")
+        lines.append("%d user(s) were skipped due to division count." % skipped_count)
+        lines.append("Nothing was changed for them and they were written to a CSV.")
+
+    lines.append("")
+    lines.append(
+        "Note: This removes the role from every migrated user. It runs after "
+        "confirming each has the new role."
+    )
+
+    return '\n'.join(lines)
 
 
 # --- Main ------------------------------------------------------------------
@@ -351,6 +397,22 @@ def main():
     if csv_path:
         print("\nWrote %d multi-division user(s) to %s"
               % (len(multi_division_rows), csv_path))
+
+    # Nothing matched, so there is nothing to grant or remove. Stop before the
+    # confirm so we do not ask about a migration of zero users.
+    if not target_ids:
+        print("\nNo users matched for migration, so there is nothing to change.")
+        return
+
+    # Show the plan and ask you to confirm before any grant or removal. If you
+    # do not confirm, no role is granted or removed.
+    old_role_name = get_role_name(auth_api, old_role_id)
+    new_role_name = get_role_name(auth_api, new_role_id)
+    question = format_migration_for_confirm(
+        len(target_ids), len(multi_division_rows), old_role_name, new_role_name
+    )
+    if not ask_to_confirm(question, "Migrate Users to a New Role"):
+        raise SystemExit("Stopped at your request. No roles were granted or removed.")
 
     grant_new_role(auth_api, matched)
     confirm_migration(auth_api, target_ids)

@@ -40,11 +40,12 @@
 # reverse a change, swap the two values in OLD_UTC_OFFSET and NEW_UTC_OFFSET and
 # run the script again.
 #
-# Safety: this script changes live Genesys Cloud flows, so it honors a DRY_RUN
-# flag that defaults to True. While DRY_RUN is True it only reads: it checks out
-# and exports each flow, shows you how many offsets it would change, and then
-# stops without importing or publishing. Set DRY_RUN to False only once the
-# preview looks right.
+# Safety: this script changes live Genesys Cloud flows, so it always reads first
+# and shows you a summary before it changes anything. It checks out and exports
+# each flow (both read-only), counts how many offsets it would change in each,
+# and shows you that plan. Then it asks you to confirm in a pop-up dialog (with
+# a typed fallback if the dialog cannot be shown). No flow is imported or
+# published unless you confirm.
 #
 # Run locally with:
 #   pip install -r requirements.txt
@@ -61,6 +62,8 @@ import urllib.request
 import PureCloudPlatformClientV2
 from PureCloudPlatformClientV2.rest import ApiException
 from dotenv import load_dotenv
+
+from confirm_prompt import ask_to_confirm
 
 
 # --- Configuration -----------------------------------------------------------
@@ -79,12 +82,6 @@ FLOW_IDS = [
 # year, so a typical run sets one of these to -6 and the other to -7.
 OLD_UTC_OFFSET = -6
 NEW_UTC_OFFSET = -7
-
-# While DRY_RUN is True the script only reads. It checks out and exports each
-# flow, prints how many offsets it would change, and stops before importing or
-# publishing. No flow is changed. Set this to False to actually write the new
-# offset and publish.
-DRY_RUN = True
 
 # A long-running Architect job (export or import) is not finished the instant
 # we start it, so we ask for its status over and over until it reaches a final
@@ -352,47 +349,79 @@ def import_flow_yaml(architect_api, flow_yaml):
     return wait_for_import_job(architect_api, import_response.id)
 
 
-def update_one_flow(architect_api, flow_id):
-    """Flip the hours-of-operation offset in one flow, then publish it.
+def get_flow_name(architect_api, flow_id):
+    """Return a flow's name, or a fallback label if we cannot read it.
 
-    Step 1: Check out the flow so we are allowed to change it.
-    Step 2: Export the flow to YAML and flip the offset in the hours checks.
-    Step 3: Show how many offsets changed so you can see the result.
-    Step 4: If DRY_RUN is True, stop here and change nothing.
-    Step 5: Import the edited YAML and publish the flow so the change goes live.
+    We show this name in the preview and the confirm dialog so you can check you
+    picked the right flows. If the read fails we return a short "(name
+    unavailable)" label instead of stopping, because a missing name should not
+    block the preview.
+    """
+    try:
+        flow = architect_api.get_flow(flow_id)
+    except ApiException as e:
+        print("Could not read flow name for %s: %s" % (flow_id, e))
+        return "(name unavailable)"
+    return getattr(flow, 'name', None) or "(name unavailable)"
 
-    Catches its own errors and returns True on success or False on failure, so
-    one bad flow does not stop the script from trying the rest of the list.
+
+def prepare_flow_update(architect_api, flow_id):
+    """Read one flow and work out the edit, without changing the live flow.
+
+    Step 1: Read the flow's name so the preview can show it.
+    Step 2: Check out the flow. This is the API version of opening the flow for
+            editing in the UI, and it is what lets a later import land on this
+            flow. Checkout does not change the live flow, so it is safe to do
+            before you confirm.
+    Step 3: Export the flow to YAML and flip the offset in the hours checks.
+
+    Returns a dictionary describing the planned edit:
+      {"flow_id", "flow_name", "changed_count", "updated_yaml"}
+    changed_count is how many offsets would change; it is 0 when the flow is
+    already on the new offset. Catches its own errors and returns None on
+    failure, so one bad flow does not stop the script from reading the rest.
     """
     print("\n--- Flow %s ---" % flow_id)
 
     try:
-        # Check out the flow first. This is the API version of opening the flow
-        # for editing in the UI, and it is what lets the later import land on
-        # this flow. We do this even in a dry run so the preview matches what a
-        # real run would see.
+        flow_name = get_flow_name(architect_api, flow_id)
         architect_api.post_flows_actions_checkout(flow_id)
 
         flow_yaml = export_flow_yaml(architect_api, flow_id)
         updated_yaml, changed_count = flip_offset_in_yaml(flow_yaml)
 
-        print("Found hours-of-operation checks and would change the offset from "
-              "%d to %d in %d place(s)." % (OLD_UTC_OFFSET, NEW_UTC_OFFSET, changed_count))
+        print("Flow '%s': would change the offset from %d to %d in %d place(s)."
+              % (flow_name, OLD_UTC_OFFSET, NEW_UTC_OFFSET, changed_count))
 
-        # If the match found the cases but none of them held the old offset,
-        # the flow is probably already set the way we want. Stop so we do not
-        # import an unchanged file and publish it for no reason.
-        if changed_count == 0:
-            print("No offsets to change in this flow. It may already use the new "
-                  "offset. Leaving it as-is.")
-            return True
+        return {
+            "flow_id": flow_id,
+            "flow_name": flow_name,
+            "changed_count": changed_count,
+            "updated_yaml": updated_yaml,
+        }
 
-        if DRY_RUN:
-            print("[DRY-RUN] Not importing or publishing. Set DRY_RUN to False "
-                  "to apply this change.")
-            return True
+    except (ApiException, RuntimeError) as e:
+        # Report this flow's failure and keep going. Returning None leaves it
+        # out of the plan so it is not shown in the confirm or published.
+        print("Could not prepare flow %s: %s" % (flow_id, e))
+        print("This flow was left as-is. Check it in the Architect UI.")
+        return None
 
-        import_flow_yaml(architect_api, updated_yaml)
+
+def import_and_publish_flow(architect_api, plan):
+    """Import the edited YAML for one flow and publish it. Call this after confirm.
+
+    plan is one of the dictionaries that prepare_flow_update returns. This
+    imports the edited YAML onto the same flow, then publishes it so the change
+    goes live. Catches its own errors and returns True on success or False on
+    failure, so one bad flow does not stop the rest.
+    """
+    flow_id = plan["flow_id"]
+    flow_name = plan["flow_name"]
+    print("\n--- Flow '%s' (%s) ---" % (flow_name, flow_id))
+
+    try:
+        import_flow_yaml(architect_api, plan["updated_yaml"])
         print("Imported the edited flow.")
 
         # Publishing is what makes the change live for callers. Importing alone
@@ -402,11 +431,44 @@ def update_one_flow(architect_api, flow_id):
         return True
 
     except (ApiException, RuntimeError) as e:
-        # Report this flow's failure and keep going. We return False so the
-        # summary at the end can tell you which flows did not update.
         print("Failed to update flow %s: %s" % (flow_id, e))
         print("This flow was left as-is. Check it in the Architect UI.")
         return False
+
+
+def format_flows_for_confirm(plans_with_changes):
+    """Build the confirm message that lists the flows and their offset counts.
+
+    plans_with_changes is the list of flow plans that would actually change (the
+    ones with a changed_count above zero). Names the offset direction and each
+    flow with how many offsets it would gain. Returns one block of text with
+    real new lines, shown in the confirm dialog and the typed fallback.
+    """
+    lines = []
+
+    lines.append(
+        "This will change the hours-of-operation time offset in %d flow(s) and "
+        "publish them live." % len(plans_with_changes)
+    )
+
+    lines.append("")
+    lines.append("Offset change: %d  ->  %d" % (OLD_UTC_OFFSET, NEW_UTC_OFFSET))
+
+    lines.append("")
+    lines.append("Flows to update:")
+    for plan in plans_with_changes:
+        lines.append("%s (%d offset(s))" % (plan["flow_name"], plan["changed_count"]))
+
+    lines.append("")
+    lines.append("Flows with no matching offsets are skipped and not published.")
+
+    lines.append("")
+    lines.append(
+        "Note: Apply re-imports and publishes each flow above, so the change "
+        "goes live in Genesys Cloud right away."
+    )
+
+    return '\n'.join(lines)
 
 
 # --- Main --------------------------------------------------------------------
@@ -417,9 +479,12 @@ def main(flow_ids):
             flip that would change nothing.
     Step 2: Stop early if there are no flows to update.
     Step 3: Sign in to Genesys Cloud.
-    Step 4: Update each flow in turn, keeping count of which succeeded and which
-            failed, so one bad flow does not stop the others.
-    Step 5: Print a short summary so you can see the result at a glance.
+    Step 4: Read and prepare every flow (check out, export, flip). This is all
+            read-only; the live flows are not changed yet.
+    Step 5: Show the plan and ask you to confirm. If you do not confirm, stop
+            before importing or publishing anything.
+    Step 6: Import and publish each flow that would change.
+    Step 7: Print a short summary so you can see the result at a glance.
     """
     if OLD_UTC_OFFSET == NEW_UTC_OFFSET:
         raise SystemExit(
@@ -441,23 +506,46 @@ def main(flow_ids):
             "near the top of the script before running."
         )
 
-    if DRY_RUN:
-        print("DRY_RUN is True, so no flow will be changed. You will see how many "
-              "offsets would change in each flow, then the script will stop "
-              "before importing or publishing.")
-
     architect_api = build_apis()
 
+    # Step 4: prepare every flow (read-only). A flow that fails to prepare
+    # returns None and is left out of the plan.
+    plans = []
+    for flow_id in real_flow_ids:
+        plan = prepare_flow_update(architect_api, flow_id)
+        if plan is not None:
+            plans.append(plan)
+
+    # Keep only the flows that would actually change. A flow with a changed
+    # count of zero is already on the new offset, so we skip it and never
+    # re-import or publish it for no reason.
+    plans_with_changes = []
+    for plan in plans:
+        if plan["changed_count"] > 0:
+            plans_with_changes.append(plan)
+
+    if not plans_with_changes:
+        print("\nNo flow needs changing. Every flow is already on the new offset "
+              "or had no hours-of-operation checks to change.")
+        return
+
+    # Step 5: show the plan and ask you to confirm. Everything above was
+    # read-only, so stopping here leaves every flow exactly as it was.
+    question = format_flows_for_confirm(plans_with_changes)
+    if not ask_to_confirm(question, "Update Service Ops Flow Offsets"):
+        raise SystemExit("Stopped at your request. No flow was imported or published.")
+
+    # Step 6: import and publish each flow that would change.
     succeeded = 0
     failed = 0
-    for flow_id in real_flow_ids:
-        if update_one_flow(architect_api, flow_id):
+    for plan in plans_with_changes:
+        if import_and_publish_flow(architect_api, plan):
             succeeded += 1
         else:
             failed += 1
 
     print("\nDone. %d flow(s) succeeded, %d flow(s) failed, out of %d."
-          % (succeeded, failed, len(real_flow_ids)))
+          % (succeeded, failed, len(plans_with_changes)))
 
 
 if __name__ == '__main__':
