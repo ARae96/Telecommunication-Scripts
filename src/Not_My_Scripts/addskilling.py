@@ -7,8 +7,8 @@ import os
 
 
 
-os.environ['GENESYS_CLOUD_CLIENT_ID'] =
-os.environ['GENESYS_CLOUD_CLIENT_SECRET'] = 
+os.environ['GENESYS_CLOUD_CLIENT_ID'] = ''
+os.environ['GENESYS_CLOUD_CLIENT_SECRET'] = ''
 os.environ['GENESYS_CLOUD_REGION'] = 'us_east_1'  # eg. us_east_1
 CLIENT_ID = os.environ['GENESYS_CLOUD_CLIENT_ID']
 CLIENT_SECRET = os.environ['GENESYS_CLOUD_CLIENT_SECRET']
