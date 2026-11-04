@@ -56,11 +56,7 @@ from confirm_prompt import ask_to_confirm
 # You can use "*" as the action to grant every action for that entity. Edit this
 # list before each run. The same list is added to every role in ROLE_URLS below.
 PERMISSIONS_TO_ADD = [
-    'wfm:agentSelfScheduleActivityMove:view',
-    'wfm:agentSelfScheduleJob:add',
-    'wfm:agentSelfScheduleOffers:view',
-    'wfm:agentSelfScheduleQuery:view',
-    'wfm:agentSelfScheduleSettings:view',
+    ''
     # Add more permissions here, one per line, for example:
     # 'analytics:conversationDetail:view',
     # 'routing:queue:view',
@@ -71,7 +67,7 @@ PERMISSIONS_TO_ADD = [
 # role ID off the end for you. A bare role ID works too. Every role in this list
 # gets every permission in PERMISSIONS_TO_ADD.
 ROLE_URLS = [
-    'https://apps.mypurecloud.com/directory/#/admin/people-permissions/roles/fed9bca6-8dc3-4cec-8151-5ebd2be08f0d',
+    ''
     # Add more role URLs here, one per line.
 ]
 
@@ -300,7 +296,7 @@ def format_plan_for_confirm(roles_to_change):
 
     lines.append("The following roles will receive the above permissions:")
     for role in roles_to_change:
-        lines.append("%s (%" % (role.name))
+        lines.append("%s" % (role.name))
 
     # Join with new lines. applescript_quote turns these into real line breaks
     # for the dialog, and the typed prompt prints them as-is.

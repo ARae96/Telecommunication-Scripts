@@ -70,7 +70,10 @@ from confirm_prompt import ask_to_confirm
 # The flows to update. Add as many flow IDs as you need, one per line. The same
 # offset flip is applied to every flow in this list.
 FLOW_IDS = [
-    'REPLACE-WITH-FLOW-ID',
+    'adb56bd8-cc59-46eb-b61b-f30c3d33b0d4',
+    '07ba494a-bf01-4da2-b466-cc5d3181aee5',
+    'c062440c-b778-4ee3-8b63-f86e56924b93',
+    '13a4265e-62b4-4218-994e-9c959a467319'
 ]
 
 # The time offset to change, in hours added to UTC. The flow holds this number
