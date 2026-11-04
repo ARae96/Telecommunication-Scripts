@@ -170,8 +170,6 @@ class UtilizationHandler:
 if __name__ == "__main__":
     config = {
         "domain": "mypurecloud.com",
-        "client_id": ,
-        "client_secret": 
     }
     api_token_handler = APIToken(config)
 
