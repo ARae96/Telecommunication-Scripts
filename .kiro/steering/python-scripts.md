@@ -23,24 +23,35 @@ Python in this workspace so new scripts match the established conventions.
   values (real values never committed).
 - Current credential variables: `GENESYS_CLOUD_CLIENT_ID`,
   `GENESYS_CLOUD_CLIENT_SECRET`, `GENESYS_CLOUD_REGION`.
-- Standardize authentication in a `build_apis()` function that:
-  1. Loads `.env` relative to the script:
-     `load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '.env'))`
+- **Do not write your own `build_apis()`.** Import it from the shared module
+  `src/genesys_common.py` (see "Shared Module" below) and name the clients the
+  script needs:
+  ```python
+  from genesys_common import build_apis
+  wfm_api, users_api = build_apis('WorkforceManagementApi', 'UsersApi')
+  ```
+  Clients come back in the order requested. Asking for one client returns it on
+  its own (not in a tuple). The shared `sign_in()` does the work every script
+  used to repeat:
+  1. Loads `.env` from the workspace root (one folder above `src/`).
   2. Reads client id/secret via `os.environ.get(...)`.
   3. Raises `SystemExit` with a helpful message if either is missing
      (point the user at copying `.env.example` to `.env`).
-  4. Returns only the specific API client(s) the script needs
-     (e.g. `AuthorizationApi`, `UsersApi`, `WorkforceManagementApi`).
-- Authenticate with client credentials:
-  `PureCloudPlatformClientV2.api_client.ApiClient().get_client_credentials_token(client_id, client_secret)`.
-- In Databricks, swap the `.env`/`os.environ` lookups for a secrets scope,
-  e.g. `dbutils.secrets.get(scope="purecloud", key="clientId")`. Keep this the
-  only spot that changes between local and Databricks auth.
+  4. Authenticates with client credentials
+     (`ApiClient().get_client_credentials_token(client_id, client_secret)`).
+- In Databricks, a local module is not importable from a notebook unless it is
+  packaged for the cluster. Notebook scripts keep their own sign in and read
+  the secrets from a scope, e.g.
+  `dbutils.secrets.get(scope="purecloud", key="clientId")`. Keep this the only
+  spot that changes between local and Databricks auth. `sign_in()` also accepts
+  a client id and secret as arguments if the module is available there.
 
 ## Script Structure
 
 - Order every script: module docstring → imports → configuration constants →
-  `build_apis()` / setup → helpers → step functions → `main()`.
+  setup → helpers → step functions → `main()`. Setup is usually just the
+  `build_apis(...)` call inside `main()`, because sign in lives in
+  `genesys_common.py`.
 - Use labeled section banners to separate concerns, matching the existing style:
   ```python
   # --- Configuration ---------------------------------------------------------
@@ -58,6 +69,58 @@ Python in this workspace so new scripts match the established conventions.
   runs a linear flow.
 - Give every function a concise docstring describing what it returns and any
   side effects.
+
+## Shared Module: `src/genesys_common.py`
+
+Common Genesys reads live in one shared module so scripts import them instead
+of rewriting them. It sits next to the scripts, so a plain import works (the
+same way `confirm_prompt.py` is imported):
+
+```python
+from genesys_common import build_apis, get_role_user_ids, get_role_name
+```
+
+**Check the module before writing a helper.** If a script needs one of the
+things below, import it. Do not copy it into the script.
+
+| Area | Functions |
+|------|-----------|
+| Sign in | `sign_in`, `build_apis` |
+| Safe calls | `call_api` (retries on a 429), `split_into_batches` |
+| Single name lookups | `get_user_name`, `get_role_name`, `get_queue_name`, `get_group_name`, `get_division_name`, `get_flow_name` (each returns `NAME_UNAVAILABLE` on failure) |
+| Many-ID name lookups | `get_user_names`, `get_queue_names` (return an ID to name dict; take `known_names` and `missing_name`) |
+| Lists of people | `get_all_users`, `get_role_user_ids`, `get_queue_user_ids` |
+| Roles | `get_role_with_permissions`, `get_user_role_ids`, `get_user_grant_division_ids`, `policy_key`, `get_role_permission_strings` |
+| BUs and MUs | `get_business_unit_id_from_link`, `get_business_units`, `get_business_unit_names`, `get_bu_name_and_start_day`, `get_management_units`, `get_management_unit_names` |
+| Week dates | `get_past_week_dates`, `format_week_folder_name` |
+| Files and data | `to_plain_data`, `convert_keys_to_snake_case`, `fetch_json_from_url`, `clean_folder_name`, `write_json_file`, `write_csv_file` |
+
+Rules for using and growing the module:
+
+- **Read-only only.** The module never changes anything in Genesys. Code that
+  grants, removes, deletes, or updates stays in the script, next to its
+  confirm step.
+- **Add to the module when a second script needs it.** When you write a helper
+  that a second script would also use (same API call, used the same way), move
+  it into `genesys_common.py` and import it in both. Keep one-off logic in the
+  script. This follows "avoid premature abstraction": wait for a real, repeated
+  need.
+- **Keep the module's style.** Plain names, a docstring on every function,
+  `try/except ApiException`, a fallback value instead of a crash for name
+  lookups, and no clever tricks. Scripts that need a different fallback text
+  pass it in (for example `missing_name='Deleted Queue'`) instead of editing
+  the shared default.
+- **Do not change a shared function's behavior casually.** Many scripts import
+  it. If a script needs different behavior, add a parameter with a default
+  that keeps today's behavior.
+- **Pagination, batching, and name lookups come from the module.** Do not
+  reimplement them. If a script keeps its own page size or batch size constant,
+  it should be because the script uses it somewhere the module does not.
+- **Update the module's header list and the table above** when you add or
+  rename a function.
+- **Notebook exception:** Databricks notebook scripts (for example
+  `Online_Adherence_Datebricks.py`) do not import the module. See Credentials
+  above.
 
 ## Configuration Conventions
 
@@ -91,9 +154,14 @@ Python in this workspace so new scripts match the established conventions.
 
 ## Common Patterns
 
-- **Pagination:** loop `page_number` from 1, extend results from
-  `response.entities or []`, and stop once `page >= (response.page_count or 0)`.
-- **Reuse the API client:** build it once via `build_apis()` and pass it into
+- **Pagination:** use the module helpers (`get_all_users`, `get_role_user_ids`,
+  `get_queue_user_ids`) where one fits. For a new list call, loop `page_number`
+  from 1, extend results from `response.entities or []`, and stop once
+  `page >= (response.page_count or 0)`. If that list gets reused, move it into
+  `genesys_common.py`.
+- **Rate limits:** wrap busy loops of reads in `call_api(...)` from the module
+  so a 429 waits and retries instead of failing.
+- **Reuse the API client:** build it once via `build_apis(...)` and pass it into
   helpers; don't re-authenticate per call.
 - **Output/logging:** use `print(...)` for progress and summaries, and
   `pprint(...)` for structured collections (matched users, duplicates).
@@ -162,4 +230,6 @@ cleverness every time.
   obvious (see Simplicity & Readability above).
 - Add comments for intent and gotchas, not for restating the code.
 - Group imports: stdlib, then third-party (`pandas`, `requests`,
-  `PureCloudPlatformClientV2`, `dotenv`), then Databricks/pyspark.
+  `PureCloudPlatformClientV2`), then workspace modules (`confirm_prompt`,
+  `genesys_common`), then Databricks/pyspark. Scripts no longer import
+  `dotenv` or `os` just to sign in. Only `genesys_common.py` loads `.env`.

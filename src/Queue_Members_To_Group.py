@@ -27,13 +27,18 @@
 
 
 # --- Imports -----------------------------------------------------------------
-import os
 
 import PureCloudPlatformClientV2
 from PureCloudPlatformClientV2.rest import ApiException
-from dotenv import load_dotenv
 
 from confirm_prompt import ask_to_confirm
+from genesys_common import (
+    build_apis,
+    get_queue_name,
+    get_group_name,
+    get_queue_user_ids,
+    split_into_batches,
+)
 
 
 # --- Configuration -----------------------------------------------------------
@@ -43,129 +48,12 @@ from confirm_prompt import ask_to_confirm
 source_queues = ['']
 new_group = ''
 
-# How many members to ask for on each page when reading the queue. The queue
-# members API returns results one page at a time, so we loop through pages.
-# The queue members API caps page size at 100, so do not set this above 100.
-PAGE_SIZE = 100
-
 # The add-members API accepts at most 50 user IDs in a single request, so we
 # add people in batches of this size. This value must not go above 50.
 ADD_BATCH_SIZE = 50
 
 
-# --- Authentication ----------------------------------------------------------
-def build_apis():
-    """Sign in to Genesys Cloud and return the Routing and Groups API clients.
-
-    Reads GENESYS_CLOUD_CLIENT_ID and GENESYS_CLOUD_CLIENT_SECRET from the .env
-    file next to this script. Stops the script with a helpful message if either
-    value is missing. Returns the clients in this order: (RoutingApi,
-    GroupsApi). RoutingApi reads the queue's members; GroupsApi adds them to
-    the group.
-    """
-    load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env'))
-    client_id = os.environ.get('GENESYS_CLOUD_CLIENT_ID')
-    client_secret = os.environ.get('GENESYS_CLOUD_CLIENT_SECRET')
-    if not client_id or not client_secret:
-        raise SystemExit(
-            "Missing Genesys Cloud credentials. Copy .env.example to .env and set "
-            "GENESYS_CLOUD_CLIENT_ID and GENESYS_CLOUD_CLIENT_SECRET."
-        )
-
-    apiclient = PureCloudPlatformClientV2.api_client.ApiClient().get_client_credentials_token(
-        client_id, client_secret
-    )
-    return (
-        PureCloudPlatformClientV2.RoutingApi(apiclient),
-        PureCloudPlatformClientV2.GroupsApi(apiclient),
-    )
-
-
 # --- Steps -------------------------------------------------------------------
-def get_queue_name(routing_api, queue_id):
-    """Return the name of a queue, or a fallback label if we cannot read it.
-
-    We print this name during the dry run so you can confirm you entered the
-    right queue before running for real. If the read fails we return a short
-    "(name unavailable)" label instead of stopping, because a missing name
-    should not block the rest of the run.
-    """
-    try:
-        queue = routing_api.get_routing_queue(queue_id)
-    except ApiException as e:
-        print("Exception when calling RoutingApi->get_routing_queue: %s\n" % e)
-        return "(name unavailable)"
-
-    return getattr(queue, 'name', None) or "(name unavailable)"
-
-
-def get_group_name(groups_api, group_id):
-    """Return the name of a group, or a fallback label if we cannot read it.
-
-    We print this name during the dry run so you can confirm you entered the
-    right group before running for real. If the read fails we return a short
-    "(name unavailable)" label instead of stopping, because a missing name
-    should not block the rest of the run.
-    """
-    try:
-        group = groups_api.get_group(group_id)
-    except ApiException as e:
-        print("Exception when calling GroupsApi->get_group: %s\n" % e)
-        return "(name unavailable)"
-
-    return getattr(group, 'name', None) or "(name unavailable)"
-
-
-def get_queue_user_ids(routing_api, queue_id):
-    """Return the user IDs of every user assigned to a queue.
-
-    Reads the queue's members one page at a time and collects each member's
-    user ID. A queue can hold both users and groups, so we ask for users only
-    with member_by='user'. Returns a list of user ID strings. Returns an empty
-    list if the read fails, so the caller can decide what to do next.
-
-    Step 1: Ask for the first page of queue members, users only.
-    Step 2: Collect the user ID from each member on the page.
-    Step 3: Move to the next page until the listing says there are no more.
-            This listing marks the end with an empty next_uri rather than a
-            page count, so we follow that instead of counting pages.
-    """
-    user_ids = []
-    page_number = 1
-
-    while True:
-        try:
-            response = routing_api.get_routing_queue_members(
-                queue_id,
-                page_number=page_number,
-                page_size=PAGE_SIZE,
-                member_by='user',
-            )
-        except ApiException as e:
-            print("Exception when calling RoutingApi->get_routing_queue_members: %s\n" % e)
-            return user_ids
-
-        entities = response.entities or []
-        for member in entities:
-            # For a user member, the member's own id is the user ID we need.
-            # Guard it in case a record is missing it, so one odd record does
-            # not stop the whole run.
-            user_id = getattr(member, 'id', None)
-            if user_id:
-                user_ids.append(user_id)
-
-        # This listing does not tell us a total page count. Instead it gives a
-        # next_uri that points at the next page, and leaves next_uri empty once
-        # there are no more pages. So we stop as soon as next_uri is empty.
-        # We also stop if a page came back empty, as a safety net so we never
-        # loop forever.
-        if not getattr(response, 'next_uri', None) or not entities:
-            break
-        page_number += 1
-
-    return user_ids
-
-
 def get_unique_user_ids_across_queues(routing_api, queue_ids):
     """Return the unique user IDs across all the queues and the queue names.
 
@@ -213,19 +101,6 @@ def get_unique_user_ids_across_queues(routing_api, queue_ids):
                 unique_user_ids.append(user_id)
 
     return unique_user_ids, queue_names
-
-
-def split_into_batches(items, batch_size):
-    """Return the items split into smaller lists of at most batch_size each.
-
-    The add-members API accepts at most 50 user IDs per request, so we send
-    people in batches. Returns a list of lists, where each inner list has up to
-    batch_size items.
-    """
-    batches = []
-    for start in range(0, len(items), batch_size):
-        batches.append(items[start:start + batch_size])
-    return batches
 
 
 def add_members_to_group(groups_api, group_id, group_name, user_ids):
@@ -302,7 +177,7 @@ def main(source_queue_ids, new_group_id):
             "script before running."
         )
 
-    routing_api, groups_api = build_apis()
+    routing_api, groups_api = build_apis('RoutingApi', 'GroupsApi')
 
     user_ids, queue_names = get_unique_user_ids_across_queues(routing_api, source_queue_ids)
 

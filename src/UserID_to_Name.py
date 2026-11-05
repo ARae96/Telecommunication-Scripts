@@ -14,11 +14,10 @@
 # =============================================================================
 
 # --- Imports -----------------------------------------------------------------
-import os
-import PureCloudPlatformClientV2
 from PureCloudPlatformClientV2.rest import ApiException
 from pprint import pprint
-from dotenv import load_dotenv
+
+from genesys_common import build_apis
 
 
 # --- Configuration -----------------------------------------------------------
@@ -26,28 +25,6 @@ from dotenv import load_dotenv
 # The user IDs you want names for. Add or replace the IDs in this list by hand.
 USER_IDS = ['aee893dc-20c1-40b3-a6ec-e473c34b2c3e']
 
-
-# --- Setup -------------------------------------------------------------------
-
-def build_apis():
-    """Authenticate and return the Users API client.
-
-    Reads the Genesys Cloud credentials from the .env file at the workspace
-    root and exits with a helpful message if either credential is missing.
-    """
-    load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '.env'))
-    client_id = os.environ.get('GENESYS_CLOUD_CLIENT_ID')
-    client_secret = os.environ.get('GENESYS_CLOUD_CLIENT_SECRET')
-    if not client_id or not client_secret:
-        raise SystemExit(
-            "Missing Genesys Cloud credentials. Copy .env.example to .env and set "
-            "GENESYS_CLOUD_CLIENT_ID and GENESYS_CLOUD_CLIENT_SECRET."
-        )
-
-    apiclient = PureCloudPlatformClientV2.api_client.ApiClient().get_client_credentials_token(
-        client_id, client_secret
-    )
-    return PureCloudPlatformClientV2.UsersApi(apiclient)
 
 
 # --- Helpers -----------------------------------------------------------------
@@ -72,7 +49,7 @@ def get_name(user_api, user_id):
 
 def main():
     # Sign in and get the Users API client.
-    user_api = build_apis()
+    user_api = build_apis('UsersApi')
 
     # Look up each ID one at a time and collect the ID/name pairs.
     results = []

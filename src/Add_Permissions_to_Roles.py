@@ -41,13 +41,12 @@
 
 # --- Imports -----------------------------------------------------------------
 
-import os
 import re
 import PureCloudPlatformClientV2
 from PureCloudPlatformClientV2.rest import ApiException
-from dotenv import load_dotenv
 
 from confirm_prompt import ask_to_confirm
+from genesys_common import build_apis, get_role_with_permissions
 
 
 # --- Configuration -----------------------------------------------------------
@@ -71,29 +70,6 @@ ROLE_URLS = [
     # Add more role URLs here, one per line.
 ]
 
-
-# --- Setup -------------------------------------------------------------------
-
-def build_apis():
-    """Sign in to Genesys Cloud and return the Authorization API client.
-
-    Reads GENESYS_CLOUD_CLIENT_ID and GENESYS_CLOUD_CLIENT_SECRET from the .env
-    file at the workspace root (one folder up from this script). Stops the
-    script with a helpful message if either value is missing.
-    """
-    load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '.env'))
-    client_id = os.environ.get('GENESYS_CLOUD_CLIENT_ID')
-    client_secret = os.environ.get('GENESYS_CLOUD_CLIENT_SECRET')
-    if not client_id or not client_secret:
-        raise SystemExit(
-            "Missing Genesys Cloud credentials. Copy .env.example to .env and set "
-            "GENESYS_CLOUD_CLIENT_ID and GENESYS_CLOUD_CLIENT_SECRET."
-        )
-
-    apiclient = PureCloudPlatformClientV2.api_client.ApiClient().get_client_credentials_token(
-        client_id, client_secret
-    )
-    return PureCloudPlatformClientV2.AuthorizationApi(apiclient)
 
 
 # --- Helpers -----------------------------------------------------------------
@@ -167,20 +143,6 @@ def role_id_from_url(role_url):
             % role_url
         )
     return last_part
-
-
-def get_role_with_permissions(auth_api, role_id):
-    """Return a single role, with its permission policies filled in.
-
-    We pass expand=['permissionPolicies'] so Genesys includes the role's full
-    permission list in the response. Without it the policies come back empty and
-    we could not tell what the role already has. Stops the script if the read
-    fails.
-    """
-    try:
-        return auth_api.get_authorization_role(role_id, expand=['permissionPolicies'])
-    except ApiException as e:
-        raise SystemExit("Failed to read role %s: %s" % (role_id, e))
 
 
 def add_actions_to_existing_policy(policy, actions_to_add):
@@ -405,7 +367,7 @@ def main():
     print("Checking %d permission(s) across %d domain/entity group(s) for %d role(s)."
           % (len(PERMISSIONS_TO_ADD), len(actions_by_key), len(role_ids)))
 
-    auth_api = build_apis()
+    auth_api = build_apis('AuthorizationApi')
 
     # Step 2: read each role once, with its current permissions. We reuse these
     # same role objects for the preview and the save, so we never fetch a role

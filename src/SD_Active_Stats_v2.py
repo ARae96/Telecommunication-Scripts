@@ -49,13 +49,13 @@
 
 
 # --- Imports -----------------------------------------------------------------
-import os
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
 import PureCloudPlatformClientV2
 from PureCloudPlatformClientV2.rest import ApiException
-from dotenv import load_dotenv
+
+from genesys_common import build_apis
 
 
 # --- Configuration -----------------------------------------------------------
@@ -124,36 +124,6 @@ OBSERVATION_METRICS = ['oWaiting', 'oUserRoutingStatuses']
 # we compute it ourselves using the same formula Genesys uses:
 #   service level = (tAnswered - nOverSla) / (tAnswered + tFlowOut)
 AGGREGATE_METRICS = ['nOffered', 'tAnswered', 'tAbandon', 'nOverSla', 'tFlowOut']
-
-
-# --- Authentication ----------------------------------------------------------
-def build_apis():
-    """Sign in to Genesys Cloud and return the API clients this report needs.
-
-    Reads GENESYS_CLOUD_CLIENT_ID and GENESYS_CLOUD_CLIENT_SECRET from the .env
-    file at the workspace root (one folder up from this script). Stops the
-    script with a helpful message if either value is missing. Returns the
-    clients in this order: (RoutingApi, AnalyticsApi). RoutingApi confirms each
-    queue ID is real; AnalyticsApi reads the live and same-day numbers.
-    """
-    load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '.env'))
-    client_id = os.environ.get('GENESYS_CLOUD_CLIENT_ID')
-    client_secret = os.environ.get('GENESYS_CLOUD_CLIENT_SECRET')
-    if not client_id or not client_secret:
-        raise SystemExit(
-            "Missing Genesys Cloud credentials. Copy .env.example to .env and set "
-            "GENESYS_CLOUD_CLIENT_ID and GENESYS_CLOUD_CLIENT_SECRET."
-        )
-
-    # Genesys API call: ApiClient.get_client_credentials_token - signs in with
-    # the client ID and secret and returns an authenticated client.
-    apiclient = PureCloudPlatformClientV2.api_client.ApiClient().get_client_credentials_token(
-        client_id, client_secret
-    )
-    return (
-        PureCloudPlatformClientV2.RoutingApi(apiclient),
-        PureCloudPlatformClientV2.AnalyticsApi(apiclient),
-    )
 
 
 # --- Helpers: reading one queue ----------------------------------------------
@@ -664,7 +634,7 @@ def main():
             totals).
     Step 4: Print the queues as side-by-side cards, laid out like the dashboard.
     """
-    routing_api, analytics_api = build_apis()
+    routing_api, analytics_api = build_apis('RoutingApi', 'AnalyticsApi')
 
     print("Checking the configured queues...")
     for title, queue_id in DASHBOARD_QUEUES:

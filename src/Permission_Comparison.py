@@ -45,9 +45,8 @@ import os
 import time
 import openpyxl
 
-import PureCloudPlatformClientV2
-from PureCloudPlatformClientV2.rest import ApiException
-from dotenv import load_dotenv
+
+from genesys_common import build_apis, get_user_role_ids, get_role_permission_strings
 
 
 
@@ -69,113 +68,7 @@ BASE_ROLES = [
     ]
 
 
-# --- Authentication ----------------------------------------------------------
-def build_apis():
-    """Sign in to Genesys Cloud and return the API client this script needs.
-
-    Reads GENESYS_CLOUD_CLIENT_ID and GENESYS_CLOUD_CLIENT_SECRET from the .env
-    file at the workspace root (one folder up from this script). Stops the
-    script with a helpful message if either value is missing. Returns the
-    AuthorizationApi client, which covers reading a user's roles and reading
-    each role's permissions.
-    """
-    load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '.env'))
-    client_id = os.environ.get('GENESYS_CLOUD_CLIENT_ID')
-    client_secret = os.environ.get('GENESYS_CLOUD_CLIENT_SECRET')
-    if not client_id or not client_secret:
-        raise SystemExit(
-            "Missing Genesys Cloud credentials. Copy .env.example to .env and set "
-            "GENESYS_CLOUD_CLIENT_ID and GENESYS_CLOUD_CLIENT_SECRET."
-        )
-
-    # Genesys API call: ApiClient.get_client_credentials_token - signs in with
-    # the client ID and secret and returns an authenticated client.
-    apiclient = PureCloudPlatformClientV2.api_client.ApiClient().get_client_credentials_token(
-        client_id, client_secret
-    )
-    return PureCloudPlatformClientV2.AuthorizationApi(apiclient)
-
-
 # --- Helpers -----------------------------------------------------------------
-def get_user_role_ids(authorization_api, user_id):
-    """Return the IDs of the roles granted to one person, with no repeats.
-
-    Reads the person's authorization grants from Genesys Cloud. Each grant
-    pairs one role with one division, so a role the person has in two divisions
-    shows up twice. We only care about which roles they have, not the division,
-    so we return each role ID once.
-
-    Returns a list of role ID strings. Returns an empty list if the call fails,
-    so the caller can decide what to do next.
-    """
-    role_ids = []
-    seen = set()
-
-    try:
-        # Genesys API call: AuthorizationApi.get_authorization_subject - lists
-        # every role and division granted to one user.
-        subject = authorization_api.get_authorization_subject(user_id)
-    except ApiException as e:
-        print("Exception when calling AuthorizationApi->get_authorization_subject: %s\n" % e)
-        return role_ids
-
-    for grant in getattr(subject, 'grants', None) or []:
-        role = getattr(grant, 'role', None)
-        role_id_value = getattr(role, 'id', None)
-        # Keep each role once, even when the user holds it in several divisions.
-        if role_id_value and role_id_value not in seen:
-            seen.add(role_id_value)
-            role_ids.append(role_id_value)
-    return role_ids
-
-
-def policy_to_permission_strings(policy):
-    """Turn one permission policy into a list of plain permission strings.
-
-    A permission policy has a domain (like "routing"), an entity inside that
-    domain (like "queue"), and an action set (the list of actions allowed, like
-    "view" or "edit"). We build one string per action, in the form
-    domain:entity:action, which is how Genesys writes a permission string.
-
-    Returns a list of strings. Returns an empty list if the policy is missing
-    its domain or entity, so a half-filled policy does not create junk strings.
-    """
-    domain = getattr(policy, 'domain', None)
-    entity_name = getattr(policy, 'entity_name', None)
-    if not domain or not entity_name:
-        return []
-
-    permission_strings = []
-    for action in getattr(policy, 'action_set', None) or []:
-        permission_strings.append("%s:%s:%s" % (domain, entity_name, action))
-    return permission_strings
-
-
-def get_role_permission_strings(authorization_api, role_id):
-    """Return the set of plain permission strings for one role.
-
-    Reads the role from Genesys to get its permission policies, then flattens
-    each policy into permission strings in the form domain:entity:action. We
-    return a set so repeats within a role are removed.
-
-    Returns an empty set if the read fails or the role has no policies, so one
-    bad role does not stop the whole run.
-    """
-    try:
-        # Genesys API call: AuthorizationApi.get_authorization_role - reads one
-        # role, including its permission policies.
-        role = authorization_api.get_authorization_role(role_id)
-    except ApiException as e:
-        print("Exception reading role %s: %s\n" % (role_id, e))
-        return set()
-
-    permission_strings = set()
-    for policy in getattr(role, 'permission_policies', None) or []:
-        for permission in policy_to_permission_strings(policy):
-            permission_strings.add(permission)
-    return permission_strings
-
-
 def collect_permissions_for_roles(authorization_api, role_ids):
     """Return the combined set of permission strings across several roles.
 
@@ -288,7 +181,7 @@ def main():
             "compare) near the top of the script before running."
         )
 
-    authorization_api = build_apis()
+    authorization_api = build_apis('AuthorizationApi')
 
     # Step 1: gather every permission the user has, across all their roles.
     user_role_ids = get_user_role_ids(authorization_api, user_id)

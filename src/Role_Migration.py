@@ -40,9 +40,14 @@ import time
 import PureCloudPlatformClientV2
 from PureCloudPlatformClientV2.rest import ApiException
 from pprint import pprint
-from dotenv import load_dotenv
 
 from confirm_prompt import ask_to_confirm
+from genesys_common import (
+    build_apis,
+    get_role_user_ids,
+    get_user_grant_division_ids,
+    get_role_name,
+)
 
 
 # --- Configuration ---------------------------------------------------------
@@ -65,81 +70,14 @@ DIVISION_IDS = [
 # it, every user would look multi-division and get skipped by mistake.
 SHARED_DIVISION_ID = 'df1b7ef4-744c-4b47-8aad-9dc6b2ecb9e0'
 
-PAGE_SIZE = 100
 
-
-# --- Setup -----------------------------------------------------------------
-
-def build_apis():
-    """Authenticate and return the Authorization and Users API clients."""
-    load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '.env'))
-    client_id = os.environ.get('GENESYS_CLOUD_CLIENT_ID')
-    client_secret = os.environ.get('GENESYS_CLOUD_CLIENT_SECRET')
-    if not client_id or not client_secret:
-        raise SystemExit(
-            "Missing Genesys Cloud credentials. Copy .env.example to .env and set "
-            "GENESYS_CLOUD_CLIENT_ID and GENESYS_CLOUD_CLIENT_SECRET."
-        )
-
-    # Genesys API call: ApiClient.get_client_credentials_token - signs in with
-    # the client ID and secret and returns an authenticated client.
-    apiclient = PureCloudPlatformClientV2.api_client.ApiClient().get_client_credentials_token(
-        client_id, client_secret
-    )
-    return (
-        PureCloudPlatformClientV2.AuthorizationApi(apiclient),
-        PureCloudPlatformClientV2.UsersApi(apiclient),
-    )
 
 
 # --- Helpers ---------------------------------------------------------------
 
-def get_role_user_ids(auth_api, role_id):
-    """Return every user ID assigned to a role, paging through all results."""
-    user_ids = []
-    page = 1
-    while True:
-        # Genesys API call: AuthorizationApi.get_authorization_role_users -
-        # lists the users assigned to one role, one page at a time.
-        response = auth_api.get_authorization_role_users(
-            role_id, page_size=PAGE_SIZE, page_number=page
-        )
-        entities = response.entities or []
-        for entity in entities:
-            user_ids.append(entity.id)
-        if page >= (response.page_count or 0):
-            break
-        page += 1
-    return user_ids
-
-
 def division_matches(division_id):
     """True if the division ID is in the DIVISION_IDS list."""
     return bool(division_id) and division_id in DIVISION_IDS
-
-
-def get_user_grant_division_ids(auth_api, user_id):
-    """Return the set of division IDs a user holds roles in.
-
-    Calls get_authorization_subject, which lists every role and division granted
-    to the user. We read the division ID from each grant and return them as a
-    set, so a user with roles in three divisions gives back three IDs.
-
-    Genesys can grant a role across all divisions at once. That shows up as the
-    special division ID "*". We keep that ID as-is, so the caller can treat "all
-    divisions" as more than one division and skip the user.
-    """
-    # Genesys API call: AuthorizationApi.get_authorization_subject - lists every
-    # role and division granted to one user.
-    subject = auth_api.get_authorization_subject(user_id)
-    grants = getattr(subject, 'grants', None) or []
-
-    division_ids = set()
-    for grant in grants:
-        division = getattr(grant, 'division', None)
-        if division is not None and division.id:
-            division_ids.add(division.id)
-    return division_ids
 
 
 def write_multi_division_csv(rows):
@@ -331,21 +269,6 @@ def remove_old_role(auth_api, target_ids):
         raise SystemExit("Failed to remove users from the old role: %s" % e)
 
 
-def get_role_name(auth_api, role_id):
-    """Return a role's name, or a fallback label if we cannot read it.
-
-    We show this name in the confirm dialog so you can check you picked the
-    right role. If the read fails we return a short "(name unavailable)" label
-    instead of stopping, because a missing name should not block the summary.
-    """
-    try:
-        role = auth_api.get_authorization_role(role_id)
-    except ApiException as e:
-        print("Could not read role name for %s: %s" % (role_id, e))
-        return "(name unavailable)"
-    return getattr(role, 'name', None) or "(name unavailable)"
-
-
 def format_migration_for_confirm(migrate_count, skipped_count, old_role_name, new_role_name):
     """Build the confirm message that describes the role migration.
 
@@ -384,7 +307,7 @@ def format_migration_for_confirm(migrate_count, skipped_count, old_role_name, ne
 # --- Main ------------------------------------------------------------------
 
 def main():
-    auth_api, users_api = build_apis()
+    auth_api, users_api = build_apis('AuthorizationApi', 'UsersApi')
 
     users_to_migrate = find_users_to_migrate(auth_api)
     matched, multi_division_rows = match_users_by_division(

@@ -63,13 +63,11 @@
 
 
 # --- Imports -----------------------------------------------------------------
-import os
-
 import PureCloudPlatformClientV2
 from PureCloudPlatformClientV2.rest import ApiException
-from dotenv import load_dotenv
 
 from confirm_prompt import ask_to_confirm
+from genesys_common import build_apis, get_user_name, get_division_name
 
 
 # --- Configuration -----------------------------------------------------------
@@ -82,39 +80,6 @@ target = '2d2883ee-456a-4433-8977-20e8eaec7ae3'
 # The object type the division-assign API expects when we move a user into a
 # division. The API accepts several object types; we only ever move users.
 DIVISION_OBJECT_TYPE_USER = 'USER'
-
-
-# --- Authentication ----------------------------------------------------------
-def build_apis():
-    """Sign in to Genesys Cloud and return the API clients this script needs.
-
-    Reads GENESYS_CLOUD_CLIENT_ID and GENESYS_CLOUD_CLIENT_SECRET from the .env
-    file next to this script. Stops the script with a helpful message if either
-    value is missing. Returns the clients in this order: (AuthorizationApi,
-    UsersApi, GroupsApi, RoutingApi).
-
-    Queues and skills are handled through UsersApi, not RoutingApi. We still
-    need RoutingApi for the utilization step, because the read, apply, and
-    reset-to-default utilization calls all live on RoutingApi.
-    """
-    load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env'))
-    client_id = os.environ.get('GENESYS_CLOUD_CLIENT_ID')
-    client_secret = os.environ.get('GENESYS_CLOUD_CLIENT_SECRET')
-    if not client_id or not client_secret:
-        raise SystemExit(
-            "Missing Genesys Cloud credentials. Copy .env.example to .env and set "
-            "GENESYS_CLOUD_CLIENT_ID and GENESYS_CLOUD_CLIENT_SECRET."
-        )
-
-    apiclient = PureCloudPlatformClientV2.api_client.ApiClient().get_client_credentials_token(
-        client_id, client_secret
-    )
-    return (
-        PureCloudPlatformClientV2.AuthorizationApi(apiclient),
-        PureCloudPlatformClientV2.UsersApi(apiclient),
-        PureCloudPlatformClientV2.GroupsApi(apiclient),
-        PureCloudPlatformClientV2.RoutingApi(apiclient),
-    )
 
 
 # --- Helpers -----------------------------------------------------------------
@@ -536,39 +501,6 @@ def apply_utilization(routing_api, user_id, aml_utilization):
         print("Exception when calling RoutingApi->put_routing_user_utilization: %s\n" % e)
 
 
-def get_user_name(users_api, user_id):
-    """Return a user's display name, or a fallback label if we cannot read it.
-
-    We show this name in the confirm dialog so you can check you picked the
-    right people. If the read fails we return a short "(name unavailable)" label
-    instead of stopping, because a missing name should not block the summary.
-    """
-    try:
-        user = users_api.get_user(user_id)
-    except ApiException as e:
-        print("Could not read user name for %s: %s" % (user_id, e))
-        return "(name unavailable)"
-    return getattr(user, 'name', None) or "(name unavailable)"
-
-
-def get_division_name(authorization_api, division_id):
-    """Return a division's name, or a fallback label if we cannot read it.
-
-    We show this name in the confirm dialog so the home division reads as a name
-    instead of an ID. Returns "none" when there is no division to look up. If
-    the read fails we return a short "(name unavailable)" label instead of
-    stopping, because a missing name should not block the summary.
-    """
-    if not division_id:
-        return "none"
-    try:
-        division = authorization_api.get_authorization_division(division_id)
-    except ApiException as e:
-        print("Could not read division name for %s: %s" % (division_id, e))
-        return "(name unavailable)"
-    return getattr(division, 'name', None) or "(name unavailable)"
-
-
 def format_aml_for_confirm(aml_name, target_name, home_division_name,
                            group_count, role_count, skill_count, queue_count,
                            has_custom_utilization):
@@ -650,7 +582,9 @@ def main(aml_id, target_id):
             "the top of the script before running."
         )
 
-    authorization_api, users_api, groups_api, routing_api = build_apis()
+    authorization_api, users_api, groups_api, routing_api = build_apis(
+        'AuthorizationApi', 'UsersApi', 'GroupsApi', 'RoutingApi'
+    )
 
     # Step A: read everything from the aml first (read-only). Doing this before
     # we wipe the target means a bad aml ID or a failed read never leaves the

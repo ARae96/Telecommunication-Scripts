@@ -16,13 +16,11 @@
 # GENESYS_CLOUD_CLIENT_ID and GENESYS_CLOUD_CLIENT_SECRET.
 # =============================================================================
 
-import os
-import PureCloudPlatformClientV2
 from PureCloudPlatformClientV2.rest import ApiException
 from pprint import pprint
-from dotenv import load_dotenv
 
 from confirm_prompt import ask_to_confirm
+from genesys_common import build_apis, get_role_user_ids, get_role_name
 
 
 # --- Configuration ---------------------------------------------------------
@@ -31,45 +29,8 @@ from confirm_prompt import ask_to_confirm
 old_role_id = ''  # duplicates removed from here
 new_role_id = ''  # kept intact (current role)
 
-PAGE_SIZE = 100
 
 
-# --- Setup -----------------------------------------------------------------
-
-def build_apis():
-    """Authenticate and return the Authorization API client."""
-    load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '.env'))
-    client_id = os.environ.get('GENESYS_CLOUD_CLIENT_ID')
-    client_secret = os.environ.get('GENESYS_CLOUD_CLIENT_SECRET')
-    if not client_id or not client_secret:
-        raise SystemExit(
-            "Missing Genesys Cloud credentials. Copy .env.example to .env and set "
-            "GENESYS_CLOUD_CLIENT_ID and GENESYS_CLOUD_CLIENT_SECRET."
-        )
-
-    apiclient = PureCloudPlatformClientV2.api_client.ApiClient().get_client_credentials_token(
-        client_id, client_secret
-    )
-    return PureCloudPlatformClientV2.AuthorizationApi(apiclient)
-
-
-# --- Helpers ---------------------------------------------------------------
-
-def get_role_user_ids(auth_api, role_id):
-    """Return every user ID assigned to a role, paging through all results."""
-    user_ids = []
-    page = 1
-    while True:
-        response = auth_api.get_authorization_role_users(
-            role_id, page_size=PAGE_SIZE, page_number=page
-        )
-        entities = response.entities or []
-        for entity in entities:
-            user_ids.append(entity.id)
-        if page >= (response.page_count or 0):
-            break
-        page += 1
-    return user_ids
 
 
 # --- Steps -----------------------------------------------------------------
@@ -117,21 +78,6 @@ def remove_duplicates_from_old_role(auth_api, duplicates):
         raise SystemExit("Failed to remove users from the old role: %s" % e)
 
 
-def get_role_name(auth_api, role_id):
-    """Return a role's name, or a fallback label if we cannot read it.
-
-    We show this name in the confirm dialog so you can check you picked the
-    right role. If the read fails we return a short "(name unavailable)" label
-    instead of stopping, because a missing name should not block the summary.
-    """
-    try:
-        role = auth_api.get_authorization_role(role_id)
-    except ApiException as e:
-        print("Could not read role name for %s: %s" % (role_id, e))
-        return "(name unavailable)"
-    return getattr(role, 'name', None) or "(name unavailable)"
-
-
 def format_removal_for_confirm(duplicate_count, old_role_name, new_role_name):
     """Build the confirm message that describes the duplicate removal.
 
@@ -161,7 +107,7 @@ def format_removal_for_confirm(duplicate_count, old_role_name, new_role_name):
 # --- Main ------------------------------------------------------------------
 
 def main():
-    auth_api = build_apis()
+    auth_api = build_apis('AuthorizationApi')
 
     old_users, new_users = collect_role_members(auth_api)
     duplicates = find_duplicates(old_users, new_users)

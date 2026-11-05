@@ -55,16 +55,15 @@
 
 
 # --- Imports -----------------------------------------------------------------
-import os
 import re
 import time
 import urllib.request
 
 import PureCloudPlatformClientV2
 from PureCloudPlatformClientV2.rest import ApiException
-from dotenv import load_dotenv
 
 from confirm_prompt import ask_to_confirm
+from genesys_common import build_apis, get_flow_name
 
 
 # --- Configuration -----------------------------------------------------------
@@ -111,32 +110,6 @@ HOLIDAYS = [
 # checks so a stuck job cannot make the script wait forever.
 POLL_SECONDS = 3
 POLL_MAX_TRIES = 60
-
-
-# --- Authentication ----------------------------------------------------------
-def build_apis():
-    """Sign in to Genesys Cloud and return the Architect API client.
-
-    Reads GENESYS_CLOUD_CLIENT_ID and GENESYS_CLOUD_CLIENT_SECRET from the .env
-    file at the workspace root (one folder up from this script). Stops the
-    script with a helpful message if either value is missing. Returns the
-    ArchitectApi client, which is the only client this script needs.
-    """
-    load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '.env'))
-    client_id = os.environ.get('GENESYS_CLOUD_CLIENT_ID')
-    client_secret = os.environ.get('GENESYS_CLOUD_CLIENT_SECRET')
-    if not client_id or not client_secret:
-        raise SystemExit(
-            "Missing Genesys Cloud credentials. Copy .env.example to .env and set "
-            "GENESYS_CLOUD_CLIENT_ID and GENESYS_CLOUD_CLIENT_SECRET."
-        )
-
-    # Genesys API call: ApiClient.get_client_credentials_token - signs in with
-    # the client ID and secret and returns an authenticated client.
-    apiclient = PureCloudPlatformClientV2.api_client.ApiClient().get_client_credentials_token(
-        client_id, client_secret
-    )
-    return PureCloudPlatformClientV2.ArchitectApi(apiclient)
 
 
 # --- Build the new expression ------------------------------------------------
@@ -427,22 +400,6 @@ def import_flow_yaml(architect_api, flow_yaml):
     return wait_for_import_job(architect_api, import_response.id)
 
 
-def get_flow_name(architect_api, flow_id):
-    """Return a flow's name, or a fallback label if we cannot read it.
-
-    We show this name in the preview and the confirm dialog so you can check you
-    picked the right flows. If the read fails we return a short "(name
-    unavailable)" label instead of stopping, because a missing name should not
-    block the preview.
-    """
-    try:
-        flow = architect_api.get_flow(flow_id)
-    except ApiException as e:
-        print("Could not read flow name for %s: %s" % (flow_id, e))
-        return "(name unavailable)"
-    return getattr(flow, 'name', None) or "(name unavailable)"
-
-
 def prepare_flow_update(architect_api, flow_id, new_expression):
     """Read one flow and work out the edit, without changing the live flow.
 
@@ -582,7 +539,7 @@ def main(flow_ids, holidays):
 
     new_expression = build_holiday_expression(holidays)
 
-    architect_api = build_apis()
+    architect_api = build_apis('ArchitectApi')
 
     # Step 4: prepare every flow (read-only). A flow that fails to prepare
     # returns None and is left out of the plan.

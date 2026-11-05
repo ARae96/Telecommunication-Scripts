@@ -31,12 +31,10 @@
 
 # --- Imports -----------------------------------------------------------------
 
-import os
-import PureCloudPlatformClientV2
 from PureCloudPlatformClientV2.rest import ApiException
-from dotenv import load_dotenv
 
 from confirm_prompt import ask_to_confirm
+from genesys_common import build_apis, get_role_with_permissions, policy_key
 
 
 # --- Configuration -----------------------------------------------------------
@@ -54,55 +52,8 @@ SOURCE_ROLE_IDS = [
 TARGET_ROLE_ID = '84f1296f-2ced-47e8-9c5d-8c98ba62659d'  # merge permissions INTO this role
 
 
-# --- Setup -------------------------------------------------------------------
-
-def build_apis():
-    """Sign in to Genesys Cloud and return the Authorization API client.
-
-    Reads GENESYS_CLOUD_CLIENT_ID and GENESYS_CLOUD_CLIENT_SECRET from the .env
-    file at the workspace root (one folder up from this script). Stops the
-    script with a helpful message if either value is missing.
-    """
-    load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '.env'))
-    client_id = os.environ.get('GENESYS_CLOUD_CLIENT_ID')
-    client_secret = os.environ.get('GENESYS_CLOUD_CLIENT_SECRET')
-    if not client_id or not client_secret:
-        raise SystemExit(
-            "Missing Genesys Cloud credentials. Copy .env.example to .env and set "
-            "GENESYS_CLOUD_CLIENT_ID and GENESYS_CLOUD_CLIENT_SECRET."
-        )
-
-    apiclient = PureCloudPlatformClientV2.api_client.ApiClient().get_client_credentials_token(
-        client_id, client_secret
-    )
-    return PureCloudPlatformClientV2.AuthorizationApi(apiclient)
-
 
 # --- Helpers -----------------------------------------------------------------
-
-def get_role_with_permissions(auth_api, role_id):
-    """Return a single role, with its permission policies filled in.
-
-    We pass expand=['permissionPolicies'] so Genesys includes the role's full
-    permission list in the response. Without it the policies come back empty and
-    there would be nothing to merge. Stops the script if the read fails.
-    """
-    try:
-        return auth_api.get_authorization_role(role_id, expand=['permissionPolicies'])
-    except ApiException as e:
-        raise SystemExit("Failed to read role %s: %s" % (role_id, e))
-
-
-def policy_key(policy):
-    """Return the key that identifies which permission a policy is about.
-
-    Two policies describe the same permission when they share the same domain
-    and entity name (for example, the "directory" domain and the "user" entity).
-    We use that pair as the key so we can spot when a source role and the target
-    role both set the same permission and need to be combined.
-    """
-    return (getattr(policy, 'domain', None), getattr(policy, 'entity_name', None))
-
 
 def union_keep_order(first_list, second_list):
     """Return one list with the items from both lists and no duplicates.
@@ -260,7 +211,7 @@ def main():
             "source list so the target is only merged into, not from itself."
         )
 
-    auth_api = build_apis()
+    auth_api = build_apis('AuthorizationApi')
 
     # Read every source role (for its permissions) and the target role (so we
     # can keep its own name and description, and its current permissions, when

@@ -60,14 +60,19 @@
 
 # --- Imports -----------------------------------------------------------------
 import json
-import os
 import re
 
 import PureCloudPlatformClientV2
 from PureCloudPlatformClientV2.rest import ApiException
-from dotenv import load_dotenv
 
 from confirm_prompt import ask_to_confirm
+from genesys_common import (
+    build_apis,
+    get_user_role_ids,
+    policy_key,
+    get_user_name,
+    get_role_name,
+)
 
 
 # --- Configuration -----------------------------------------------------------
@@ -95,71 +100,7 @@ new_role = '84f1296f-2ced-47e8-9c5d-8c98ba62659d'
 # permissions are ever retired, so the real number of retries is small.
 MAX_WRITE_RETRIES = 50
 
-# --- Authentication ----------------------------------------------------------
-def build_apis():
-    """Sign in to Genesys Cloud and return the API client this script needs.
-
-    Reads GENESYS_CLOUD_CLIENT_ID and GENESYS_CLOUD_CLIENT_SECRET from the .env
-    file at the workspace root (one folder up from this script). Stops the
-    script with a helpful message if either value is missing. Returns the
-    AuthorizationApi client (which covers both reading roles and updating a
-    role) and the UsersApi client (used only to read the source user's name for
-    the confirm summary). Returns them in this order: (AuthorizationApi,
-    UsersApi).
-    """
-    load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '.env'))
-    client_id = os.environ.get('GENESYS_CLOUD_CLIENT_ID')
-    client_secret = os.environ.get('GENESYS_CLOUD_CLIENT_SECRET')
-    if not client_id or not client_secret:
-        raise SystemExit(
-            "Missing Genesys Cloud credentials. Copy .env.example to .env and set "
-            "GENESYS_CLOUD_CLIENT_ID and GENESYS_CLOUD_CLIENT_SECRET."
-        )
-
-    # Genesys API call: ApiClient.get_client_credentials_token - signs in with
-    # the client ID and secret and returns an authenticated client.
-    apiclient = PureCloudPlatformClientV2.api_client.ApiClient().get_client_credentials_token(
-        client_id, client_secret
-    )
-    return (
-        PureCloudPlatformClientV2.AuthorizationApi(apiclient),
-        PureCloudPlatformClientV2.UsersApi(apiclient),
-    )
-
-
 # --- Helpers -----------------------------------------------------------------
-def get_source_role_ids(authorization_api, user_id):
-    """Return the IDs of the roles granted to one person, with no repeats.
-
-    Reads the person's authorization grants from Genesys Cloud. Each grant
-    pairs one role with one division, so a role the person has in two divisions
-    shows up twice. We only care about which roles they have, not the division,
-    so we return each role ID once.
-
-    Returns a list of role ID strings. Returns an empty list if the call fails,
-    so the caller can decide what to do next.
-    """
-    role_ids = []
-    seen = set()
-
-    try:
-        # Genesys API call: AuthorizationApi.get_authorization_subject - lists
-        # every role and division granted to one user.
-        subject = authorization_api.get_authorization_subject(user_id)
-    except ApiException as e:
-        print("Exception when calling AuthorizationApi->get_authorization_subject: %s\n" % e)
-        return role_ids
-
-    for grant in getattr(subject, 'grants', None) or []:
-        role = getattr(grant, 'role', None)
-        role_id = getattr(role, 'id', None)
-        # Keep each role once, even when the user holds it in several divisions.
-        if role_id and role_id not in seen:
-            seen.add(role_id)
-            role_ids.append(role_id)
-    return role_ids
-
-
 def get_role_permission_policies(authorization_api, role_id):
     """Return the permission policies for one role.
 
@@ -179,20 +120,6 @@ def get_role_permission_policies(authorization_api, role_id):
         print("Exception reading role %s: %s\n" % (role_id, e))
         return []
     return getattr(role, 'permission_policies', None) or []
-
-
-def policy_key(policy):
-    """Return the (domain, entity) pair that identifies a permission policy.
-
-    We treat a permission policy as "the same permission" when it covers the
-    same domain and the same entity inside that domain. For example, the
-    "routing" domain and the "queue" entity. The actions allowed on it can
-    differ between roles, and we join those actions in the merge step. Returns
-    a (domain, entity_name) tuple we can use as a dictionary key.
-    """
-    domain = getattr(policy, 'domain', None)
-    entity_name = getattr(policy, 'entity_name', None)
-    return (domain, entity_name)
 
 
 def parse_not_allowed_actions(api_exception):
@@ -490,37 +417,6 @@ def update_target_role(authorization_api, role_id, merged_policies):
     return dropped_permissions
 
 
-def get_user_name(users_api, user_id):
-    """Return a user's display name, or a fallback label if we cannot read it.
-
-    We show this name in the confirm dialog so you can check you picked the
-    right person. If the read fails we return a short "(name unavailable)" label
-    instead of stopping, because a missing name should not block the summary.
-    """
-    try:
-        user = users_api.get_user(user_id)
-    except ApiException as e:
-        print("Could not read user name for %s: %s" % (user_id, e))
-        return "(name unavailable)"
-    return getattr(user, 'name', None) or "(name unavailable)"
-
-
-def get_role_name(authorization_api, role_id):
-    """Return a role's name, or a fallback label if we cannot read it.
-
-    We show this name in the confirm dialog so you can check you picked the
-    right target role. If the read fails we return a short "(name unavailable)"
-    label instead of stopping, because a missing name should not block the
-    summary.
-    """
-    try:
-        role = authorization_api.get_authorization_role(role_id)
-    except ApiException as e:
-        print("Could not read role name for %s: %s" % (role_id, e))
-        return "(name unavailable)"
-    return getattr(role, 'name', None) or "(name unavailable)"
-
-
 def format_combine_for_confirm(source_user_name, target_role_name, role_count, policy_count):
     """Build the confirm message that describes the permission roll-up.
 
@@ -576,10 +472,10 @@ def main():
     before Step 5. If you do not confirm, the target role is left alone and
     nothing is written.
     """
-    authorization_api, users_api = build_apis()
+    authorization_api, users_api = build_apis('AuthorizationApi', 'UsersApi')
 
     # Step 1: read the source user's roles.
-    source_role_ids = get_source_role_ids(authorization_api, source_user)
+    source_role_ids = get_user_role_ids(authorization_api, source_user)
     if not source_role_ids:
         raise SystemExit(
             "The source user has no roles, or the read failed. Check the "

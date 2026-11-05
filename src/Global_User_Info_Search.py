@@ -39,19 +39,13 @@
 
 
 # --- Imports -----------------------------------------------------------------
-import os
 
-import PureCloudPlatformClientV2
 from PureCloudPlatformClientV2.rest import ApiException
-from dotenv import load_dotenv
+
+from genesys_common import build_apis, get_all_users, split_into_batches
 
 
 # --- Configuration -----------------------------------------------------------
-# How many users to ask for on each page. The users API returns results one
-# page at a time, so we loop through the pages. This API caps page size at 100,
-# so do not set this above 100.
-PAGE_SIZE = 100
-
 # Which user states to include in the report. Genesys can return users in three
 # states: "active" (current employees who can sign in), "inactive" (accounts
 # turned off but not removed), and "deleted" (removed accounts). We read active
@@ -95,88 +89,7 @@ NO_LICENSE_LABEL = '(no license)'
 TIERED_LICENSES_LOW_TO_HIGH = ['collaboratePro', 'communicate', 'cloudCX3']
 
 
-# --- Authentication ----------------------------------------------------------
-def build_apis():
-    """Sign in to Genesys Cloud and return the API clients this report needs.
-
-    Reads GENESYS_CLOUD_CLIENT_ID and GENESYS_CLOUD_CLIENT_SECRET from the .env
-    file at the workspace root (one folder up from this script). Stops the
-    script with a helpful message if either value is missing. Returns the
-    clients in this order: (UsersApi, LicenseApi). UsersApi reads the users and
-    their login date and division; LicenseApi reads which license each user
-    holds.
-    """
-    load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '.env'))
-    client_id = os.environ.get('GENESYS_CLOUD_CLIENT_ID')
-    client_secret = os.environ.get('GENESYS_CLOUD_CLIENT_SECRET')
-    if not client_id or not client_secret:
-        raise SystemExit(
-            "Missing Genesys Cloud credentials. Copy .env.example to .env and set "
-            "GENESYS_CLOUD_CLIENT_ID and GENESYS_CLOUD_CLIENT_SECRET."
-        )
-
-    # Genesys API call: ApiClient.get_client_credentials_token - signs in with
-    # the client ID and secret and returns an authenticated client.
-    apiclient = PureCloudPlatformClientV2.api_client.ApiClient().get_client_credentials_token(
-        client_id, client_secret
-    )
-    return (
-        PureCloudPlatformClientV2.UsersApi(apiclient),
-        PureCloudPlatformClientV2.LicenseApi(apiclient),
-    )
-
-
 # --- Helpers -----------------------------------------------------------------
-def get_all_users(users_api):
-    """Return a list of every user in the states we care about.
-
-    Reads users one page at a time and gathers them into a single list. For
-    each user we also ask Genesys for their division, so the per-division
-    breakdown later has something to group by.
-
-    Because the API lets us ask for only one state at a time, we loop over the
-    states in USER_STATES and read all pages for each one, then add them all
-    together. Returns a list of user objects.
-
-    Step 1: For each state we want (active, inactive), start at page 1.
-    Step 2: Read a page of users for that state, with the division included.
-    Step 3: Add that page's users to the full list.
-    Step 4: Move to the next page until we have read the last page for the
-            state, then move on to the next state.
-    """
-    all_users = []
-
-    for state in USER_STATES:
-        page_number = 1
-
-        while True:
-            try:
-                response = users_api.get_users(
-                    page_size=PAGE_SIZE,
-                    page_number=page_number,
-                    expand=EXPAND_FIELDS,
-                    state=state,
-                )
-            except ApiException as e:
-                print("Exception when calling UsersApi->get_users: %s\n" % e)
-                # Stop reading this state on an error, but keep whatever we
-                # already gathered so one bad page does not throw away the run.
-                break
-
-            entities = response.entities or []
-            all_users.extend(entities)
-
-            # The API tells us the total number of pages. We stop once we have
-            # read the last page. If page_count comes back as 0 or missing,
-            # there is nothing more to read, so we stop too.
-            page_count = response.page_count or 0
-            if page_number >= page_count:
-                break
-            page_number += 1
-
-    return all_users
-
-
 def has_never_logged_in(user):
     """Return True when a user has never logged in to Genesys Cloud.
 
@@ -218,19 +131,6 @@ def count_never_logged_in_by_division(users):
         # user. This gives us a running count per division.
         counts[division_name] = counts.get(division_name, 0) + 1
     return counts
-
-
-def split_into_batches(items, batch_size):
-    """Return the items split into smaller lists of at most batch_size each.
-
-    The license lookup takes at most 100 user IDs per request, so we ask about
-    people in batches. Returns a list of lists, where each inner list has up to
-    batch_size items.
-    """
-    batches = []
-    for start in range(0, len(items), batch_size):
-        batches.append(items[start:start + batch_size])
-    return batches
 
 
 def get_licenses_by_user_id(license_api, user_ids):
@@ -378,10 +278,10 @@ def main():
     Step 6: Print the count, the percent of all users, a per-division breakdown,
             and a per-license-type breakdown of the never-logged-in users.
     """
-    users_api, license_api = build_apis()
+    users_api, license_api = build_apis('UsersApi', 'LicenseApi')
 
     print("Reading users from Genesys Cloud (states: %s)..." % ", ".join(USER_STATES))
-    all_users = get_all_users(users_api)
+    all_users = get_all_users(users_api, USER_STATES, EXPAND_FIELDS)
 
     total_users = len(all_users)
 
