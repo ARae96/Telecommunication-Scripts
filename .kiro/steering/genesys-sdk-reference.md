@@ -76,14 +76,18 @@ before assuming it exists in 267.0.0.
 
 ## Workspace Conventions Reminder
 
-- Authenticate once via `build_apis()` using client credentials
-  (`get_client_credentials_token`) and return only the specific `*Api` clients a
-  script needs. Do not re-authenticate per call.
+- Authenticate once with `build_apis(...)` from `genesys_common.py` (client
+  credentials) and name only the `*Api` clients a script needs, for example
+  `build_apis('UsersApi', 'RoutingApi')`. Do not re-authenticate per call.
+  Check `genesys_common.py` for an existing helper before writing a new SDK
+  read.
 - Wrap SDK calls in `try/except ApiException as e`; for fatal top-level failures
   raise `SystemExit`, and inside loops catch per-item errors and continue.
 - Use the standard pagination pattern: loop `page_number` from 1, extend from
   `response.entities or []`, stop once `page >= (response.page_count or 0)`.
-- Any script that mutates Genesys state must honor the `DRY_RUN` flag.
+- Any script that mutates Genesys state must read and preview first, then call
+  `ask_to_confirm` from `confirm_prompt.py` before it changes anything. Do not
+  use a `DRY_RUN` flag.
 
 (See `python-scripts.md` for the full Python standards; this file only adds the
 external SDK/API reference links and lookup guidance.)

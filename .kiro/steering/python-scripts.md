@@ -132,16 +132,85 @@ Rules for using and growing the module:
   (e.g. `TABLE_BUSINESS_UNITS = "wgu_lakehouse.genesys.stg_business_units"`).
 - Explain non-obvious config with an inline comment right above it.
 
-## Safety: DRY_RUN for Mutations
+## Safety: Confirm Dialog for Mutations
 
-- Any script that **modifies** Genesys state (grant/remove roles, delete,
-  bulk update) must expose a module-level `DRY_RUN` flag, defaulting to `True`.
-- When `DRY_RUN` is `True`, perform reads only and print the intended changes
-  with a `[DRY-RUN]` prefix; make no API calls that mutate state.
-- For destructive multi-step flows, verify the intended end state before the
-  irreversible step and abort (`raise SystemExit(1)`) if verification fails
-  (e.g. confirm the new role is present on all users before removing the old
-  role). Never silently treat a failed/partial job as success.
+Do **not** add a `DRY_RUN` flag. Any script that **modifies** Genesys state
+(grant/remove roles, add group members, delete, bulk update, publish a flow)
+uses a read, preview, confirm, apply flow instead. Every run previews first, so
+there is no toggle to forget to flip.
+
+The confirm helper lives in `src/confirm_prompt.py`:
+
+```python
+from confirm_prompt import ask_to_confirm
+
+message = "A plain summary of what will change..."
+if not ask_to_confirm(message, "My Script Title"):
+    raise SystemExit("Stopped at your request. Nothing was changed.")
+```
+
+- On a Mac, `ask_to_confirm` shows a dialog with **Cancel** and **Apply**
+  buttons (Apply is the default, so Return confirms). If the dialog cannot be
+  shown (Databricks, Linux, or `osascript` missing), it falls back to a typed
+  prompt and continues only when you type `yes`. Anything other than a clear
+  yes means no.
+- `confirm_prompt.py` knows nothing about roles, queues, or users. Do not add
+  Genesys logic to it, and do not re-implement it in a script.
+
+How to build the flow:
+
+1. **Read first.** Read everything you need and change nothing. Read each
+   entity once and reuse that object when you apply, so you do not fetch it
+   twice.
+2. **Plan without mutating.** Use a separate function that returns what would
+   change (for example `plan_new_permissions_for_role`). It must make no
+   mutating API calls.
+3. **Preview in the terminal.** Print the full plan with `print(...)`. This is
+   the complete record, because a dialog cannot scroll.
+4. **Stop if nothing would change.** Print a short message and return before
+   the confirm, so nobody is asked about a change of zero items.
+5. **Confirm once.** Put a single confirm gate after all read-only work and
+   before the first change. For multi-step scripts, that means after any
+   export or checkout that does not touch live data.
+6. **Apply, then summarize.** Make the changes, handling errors per item (see
+   Error Handling), then print one short summary.
+
+Writing the dialog message (build it in a `format_..._for_confirm` function):
+
+- **Show names, not IDs.** Look names up with the shared helpers in
+  `genesys_common.py` (`get_user_name`, `get_role_name`, and so on). They fall
+  back to `(name unavailable)` if a read fails.
+- **Put the whole plan in the dialog,** not a one-line summary. Use short,
+  flat sections, such as "The following permissions will be added:" followed by
+  one item per line, then a blank line, then "The following roles will receive
+  the above permissions:" followed by the role names.
+- **List only what will actually change,** but still show every entity in
+  scope so the reader sees who is affected.
+- **Spell out destructive or live effects in plain words.** Examples: "this
+  REPLACES the target's current access", "the old role is removed only after
+  every user is confirmed to have the new role", "Apply publishes the flow
+  live".
+- **Keep it short for large plans.** The dialog does not scroll. For long lists
+  (such as every migrated user), show counts and the key names, and leave the
+  full list to the terminal preview.
+- The same message text drives both the Mac dialog and the typed fallback, so
+  both show the same list.
+
+Final summary:
+
+- Print **one** summary, not one block per item. List what was changed once,
+  then the names of the entities that actually changed. Leave out ones that
+  already had everything or whose save failed.
+- Word it as what happened, for example: "You have successfully added the
+  following 3 permission(s) to these 2 role(s)."
+
+Destructive and multi-step flows:
+
+- Verify the intended end state before the irreversible step and abort
+  (`raise SystemExit(1)`) if verification fails (e.g. confirm the new role is
+  present on all users before removing the old role). Never silently treat a
+  failed or partial job as success.
+- Keep a script's existing safety checks when you change its confirm flow.
 
 ## Error Handling
 
