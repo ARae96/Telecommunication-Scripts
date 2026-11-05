@@ -9,8 +9,9 @@ Python in this workspace so new scripts match the established conventions.
 - All scripts automate **Genesys Cloud** via the official SDK
   `PureCloudPlatformClientV2` (pinned in `requirements.txt`).
 - Runtime dependencies live in `requirements.txt` with **pinned versions**
-  (e.g. `PureCloudPlatformClientV2==266.0.0`, `python-dotenv==1.0.1`). Pin any
-  new dependency you add.
+  (e.g. `python-dotenv==1.0.1`). Pin any new dependency you add. The SDK
+  version is whatever `requirements.txt` says, so check there instead of
+  copying the number into other files.
 - Local runs assume `pip install -r requirements.txt` plus a populated `.env`.
 - Some scripts double as **Databricks notebooks** and use `spark`, `display`,
   `dbutils`, and `%sql`, which only exist in the Databricks runtime.

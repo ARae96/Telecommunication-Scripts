@@ -55,10 +55,10 @@ for method names, parameters, and model fields.
 
 ## Version Note
 
-The workspace pins `PureCloudPlatformClientV2==267.0.0` in `requirements.txt`.
-The repo `master` docs track the latest release, which may be slightly ahead.
-If a method or field in the docs looks new, check `releaseNotes.md` in the repo
-before assuming it exists in 267.0.0.
+The workspace pins the SDK version in `requirements.txt`. The repo `master`
+docs track the latest release, which may be slightly ahead of that pin. If a
+method or field in the docs looks new, check `releaseNotes.md` in the repo
+before assuming it exists in the pinned version.
 
 ## How to Look Things Up
 
@@ -69,25 +69,16 @@ before assuming it exists in 267.0.0.
   passed via a request/body object.
 - **Model fields:** SDK models are separate classes (e.g. `User`, `Queue`,
   `AuthzDivision`). Check the model page for exact attribute names before
-  reading or setting them. Guard optional attributes with
-  `getattr(obj, 'attr', None)` per the workspace Python standards.
+  reading or setting them. Optional attributes need a guard (see
+  `python-scripts.md`).
 - **REST endpoint / scopes:** When unsure which SDK call maps to an endpoint, or
   what permissions it needs, look it up in the API Explorer by resource path.
 
-## Workspace Conventions Reminder
+## Workspace Conventions
 
-- Authenticate once with `build_apis(...)` from `genesys_common.py` (client
-  credentials) and name only the `*Api` clients a script needs, for example
-  `build_apis('UsersApi', 'RoutingApi')`. Do not re-authenticate per call.
-  Check `genesys_common.py` for an existing helper before writing a new SDK
-  read.
-- Wrap SDK calls in `try/except ApiException as e`; for fatal top-level failures
-  raise `SystemExit`, and inside loops catch per-item errors and continue.
-- Use the standard pagination pattern: loop `page_number` from 1, extend from
-  `response.entities or []`, stop once `page >= (response.page_count or 0)`.
-- Any script that mutates Genesys state must read and preview first, then call
-  `ask_to_confirm` from `confirm_prompt.py` before it changes anything. Do not
-  use a `DRY_RUN` flag.
+Before you write a new SDK read, check `src/genesys_common.py`. It may already
+have the helper.
 
-(See `python-scripts.md` for the full Python standards; this file only adds the
-external SDK/API reference links and lookup guidance.)
+All coding rules live in `python-scripts.md`: sign in, the shared module, error
+handling, pagination, and the confirm dialog for changes. This file only adds
+the external SDK/API reference links and lookup guidance.
