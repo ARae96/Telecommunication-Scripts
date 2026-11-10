@@ -91,7 +91,7 @@ things below, import it. Do not copy it into the script.
 | Single name lookups | `get_user_name`, `get_role_name`, `get_queue_name`, `get_group_name`, `get_division_name`, `get_flow_name` (each returns `NAME_UNAVAILABLE` on failure) |
 | Many-ID name lookups | `get_user_names`, `get_queue_names` (return an ID to name dict; take `known_names` and `missing_name`) |
 | Lists of people | `get_all_users`, `get_role_user_ids`, `get_queue_user_ids` |
-| Roles | `get_role_with_permissions`, `get_user_role_ids`, `get_user_grant_division_ids`, `policy_key`, `get_role_permission_strings` |
+| Roles | `get_role_with_permissions`, `get_user_role_ids`, `get_user_grant_division_ids`, `policy_key`, `get_role_permission_strings`, `get_role_id_from_link` |
 | BUs and MUs | `get_business_unit_id_from_link`, `get_business_units`, `get_business_unit_names`, `get_bu_name_and_start_day`, `get_management_units`, `get_management_unit_names` |
 | Week dates | `get_past_week_dates`, `format_week_folder_name` |
 | Files and data | `to_plain_data`, `convert_keys_to_snake_case`, `fetch_json_from_url`, `clean_folder_name`, `write_json_file`, `write_csv_file` |

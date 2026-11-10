@@ -41,12 +41,11 @@
 
 # --- Imports -----------------------------------------------------------------
 
-import re
 import PureCloudPlatformClientV2
 from PureCloudPlatformClientV2.rest import ApiException
 
 from confirm_prompt import ask_to_confirm
-from genesys_common import build_apis, get_role_with_permissions
+from genesys_common import build_apis, get_role_id_from_link, get_role_with_permissions
 
 
 # --- Configuration -----------------------------------------------------------
@@ -111,38 +110,6 @@ def group_actions_by_domain_and_entity(permissions):
         if action not in actions_by_key[key]:
             actions_by_key[key].append(action)
     return actions_by_key
-
-
-def looks_like_role_id(text):
-    """True if the text looks like a Genesys role ID (a GUID).
-
-    A role ID is a GUID: five groups of hex digits joined by dashes, like
-    81425a3b-38fa-4f29-9e3c-1e1b991576d2. We check the shape so a bad paste is
-    caught here instead of being sent to Genesys as a junk ID.
-    """
-    return bool(re.fullmatch(r'[0-9a-fA-F-]{36}', text)) and text.count('-') == 4
-
-
-def role_id_from_url(role_url):
-    """Pull the role ID out of a role page URL (or accept a bare ID).
-
-    When you open a role in Genesys, the ID is the last part of the page URL,
-    right after the final slash, for example:
-      .../roles/81425a3b-38fa-4f29-9e3c-1e1b991576d2
-    This takes whatever you pasted, trims any trailing slash, and keeps the part
-    after the last slash. If you pasted a bare role ID with no slashes, that
-    comes back unchanged. Stops the script if the result does not look like a
-    role ID, so a wrong paste is caught before we call Genesys.
-    """
-    cleaned = role_url.strip().rstrip('/')
-    last_part = cleaned.split('/')[-1]
-    if not looks_like_role_id(last_part):
-        raise SystemExit(
-            "Could not find a role ID in '%s'. Paste the full role page URL from "
-            "your browser (it ends in the role ID), or paste the bare role ID."
-            % role_url
-        )
-    return last_part
 
 
 def add_actions_to_existing_policy(policy, actions_to_add):
@@ -358,7 +325,7 @@ def main():
     # is caught before we sign in or change anything.
     role_ids = []
     for role_url in ROLE_URLS:
-        role_ids.append(role_id_from_url(role_url))
+        role_ids.append(get_role_id_from_link(role_url))
 
     # Turn the flat permission list into policies grouped by domain and entity
     # once, up front, so every role is checked and updated with the same set.

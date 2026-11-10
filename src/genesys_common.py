@@ -26,7 +26,7 @@
 #   - Lists of people:  get_all_users, get_role_user_ids, get_queue_user_ids
 #   - Roles:            get_role_with_permissions, get_user_role_ids,
 #                       get_user_grant_division_ids, policy_key,
-#                       get_role_permission_strings
+#                       get_role_permission_strings, get_role_id_from_link
 #   - BUs and MUs:      get_business_unit_id_from_link, get_business_units,
 #                       get_business_unit_names, get_bu_name_and_start_day,
 #                       get_management_units, get_management_unit_names
@@ -485,6 +485,25 @@ def get_role_permission_strings(authorization_api, role_id):
         for action in (getattr(policy, 'action_set', None) or []):
             permission_strings.add("%s:%s:%s" % (domain, entity_name, action))
     return permission_strings
+
+
+def get_role_id_from_link(role_link):
+    """Return the role ID from a role page link, or from a bare role ID.
+
+    When you open a role in Genesys Cloud, the ID is the last part of the page
+    link, right after the final slash. We trim spaces and any trailing slash,
+    then keep that last part. Stops the script if it does not look like a role
+    ID (a GUID), so a bad paste is caught before we call Genesys.
+    """
+    last_part = role_link.strip().rstrip('/').split('/')[-1]
+    guid_pattern = r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+    if not re.match(guid_pattern, last_part):
+        raise SystemExit(
+            "Could not find a role ID in '%s'. Paste the full role page link "
+            "from your browser (it ends in the role ID), or paste the bare role ID."
+            % role_link
+        )
+    return last_part
 
 
 # --- Business units (BUs) and management units (MUs) -------------------------
