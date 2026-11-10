@@ -11,14 +11,6 @@
           "DATABRICKS_CONFIG_PROFILE": "DEFAULT"
         },
         "disabled": false
-      },
-      "genesys-cloud-mcp-plus": {
-        "command": "/bin/sh",
-        "args": [
-          "-c",
-          "set -a && . /Users/alice.weaver/.kiro/crew/workspace/Telecommunication-Scripts/.env && set +a && GENESYSCLOUD_OAUTHCLIENT_ID=\"$GENESYS_CLOUD_CLIENT_ID\" GENESYSCLOUD_OAUTHCLIENT_SECRET=\"$GENESYS_CLOUD_CLIENT_SECRET\" GENESYSCLOUD_REGION=\"us-east-1\" exec /opt/homebrew/bin/node /Users/alice.weaver/.kiro/crew/workspace-member-mate/.mcp-servers/genesys-cloud-mcp-plus/dist/cli.js"
-        ],
-        "disabled": false
       }
     }
   }
