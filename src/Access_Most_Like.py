@@ -74,8 +74,8 @@ from genesys_common import build_apis, get_user_name, get_division_name
 # Enter the two user IDs by hand before running. "aml" is the person whose
 # access is already correct and that we copy from. "target" is the person we
 # make match the aml (a new hire or an internal transfer).
-aml = 'fdbef2f8-cf78-4aac-b282-676f2cfcc006'
-target = '2d2883ee-456a-4433-8977-20e8eaec7ae3'
+aml = ''
+target = ''
 
 # The object type the division-assign API expects when we move a user into a
 # division. The API accepts several object types; we only ever move users.
