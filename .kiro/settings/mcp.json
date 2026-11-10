@@ -1,17 +1,13 @@
 {
-  "mcpServers": {},
-  "powers": {
-    "mcpServers": {
-      "power-databricks-databricks": {
-        "command": "/Users/alice.weaver/.ai-dev-kit/.venv/bin/python",
-        "args": [
-          "/Users/alice.weaver/.ai-dev-kit/repo/databricks-mcp-server/run_server.py"
-        ],
-        "env": {
-          "DATABRICKS_CONFIG_PROFILE": "DEFAULT"
-        },
-        "disabled": false
-      }
+  "mcpServers": {
+    "genesys-cloud-mcp-plus": {
+      "command": "/bin/sh",
+      "args": [
+        "-c",
+        "cd '/Users/alice.weaver/Kiro Workspaces/Script Development' && set -a && . ./.env && set +a && GENESYSCLOUD_OAUTHCLIENT_ID=\"$GENESYS_CLOUD_CLIENT_ID\" GENESYSCLOUD_OAUTHCLIENT_SECRET=\"$GENESYS_CLOUD_CLIENT_SECRET\" GENESYSCLOUD_REGION=\"us-east-1\" exec /opt/homebrew/bin/node .mcp-servers/genesys-cloud-mcp-plus/dist/cli.js"
+      ],
+      "disabled": false,
+      "autoApprove": []
     }
   }
 }
