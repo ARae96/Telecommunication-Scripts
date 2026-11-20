@@ -1,0 +1,52 @@
+2026-11-20 11:34:24,577 - Add_Permissions_to_Roles - INFO - Starting script: Add_Permissions_to_Roles
+2026-11-20 11:34:24,577 - Add_Permissions_to_Roles - INFO - Command: /Applications/KiroCrew.app/Contents/Resources/backend-dist/kirocrew-backend-arm64/bin/python /Users/alice.weaver/.kiro/crew/workspace-member-mate/worktrees/mate/Script-Development-b8e43f07-4afe964f/src/Add_Permissions_to_Roles.py
+2026-11-20 11:34:24,577 - Add_Permissions_to_Roles - INFO - Script finished with code 0
+2026-11-20 11:34:24,577 - Add_Permissions_to_Roles - INFO - Elapsed time: 0.00 seconds
+2026-11-20 11:34:24,577 - Add_Permissions_to_Roles - DEBUG - STDOUT:
+Mock output
+2026-11-20 11:34:28,821 - Add_Permissions_to_Roles - INFO - Starting script: Add_Permissions_to_Roles
+2026-11-20 11:34:28,821 - Add_Permissions_to_Roles - INFO - Command: /Applications/KiroCrew.app/Contents/Resources/backend-dist/kirocrew-backend-arm64/bin/python /Users/alice.weaver/.kiro/crew/workspace-member-mate/worktrees/mate/Script-Development-b8e43f07-4afe964f/src/Add_Permissions_to_Roles.py
+2026-11-20 11:34:28,821 - Add_Permissions_to_Roles - INFO - Script finished with code 0
+2026-11-20 11:34:28,821 - Add_Permissions_to_Roles - INFO - Elapsed time: 0.00 seconds
+2026-11-20 11:34:28,821 - Add_Permissions_to_Roles - DEBUG - STDOUT:
+Mock output
+2026-11-20 11:34:28,822 - Add_Permissions_to_Roles - INFO - Starting script: Add_Permissions_to_Roles
+2026-11-20 11:34:28,822 - Add_Permissions_to_Roles - INFO - Starting script: Add_Permissions_to_Roles
+2026-11-20 11:34:28,822 - Add_Permissions_to_Roles - INFO - Command: /Applications/KiroCrew.app/Contents/Resources/backend-dist/kirocrew-backend-arm64/bin/python /Users/alice.weaver/.kiro/crew/workspace-member-mate/worktrees/mate/Script-Development-b8e43f07-4afe964f/src/Add_Permissions_to_Roles.py
+2026-11-20 11:34:28,822 - Add_Permissions_to_Roles - INFO - Command: /Applications/KiroCrew.app/Contents/Resources/backend-dist/kirocrew-backend-arm64/bin/python /Users/alice.weaver/.kiro/crew/workspace-member-mate/worktrees/mate/Script-Development-b8e43f07-4afe964f/src/Add_Permissions_to_Roles.py
+2026-11-20 11:34:28,822 - Add_Permissions_to_Roles - ERROR - Script timed out after 10 seconds. Check if the script is waiting for input or stuck in a loop.
+2026-11-20 11:34:28,822 - Add_Permissions_to_Roles - ERROR - Script timed out after 10 seconds. Check if the script is waiting for input or stuck in a loop.
+2026-11-20 11:34:32,731 - Add_Permissions_to_Roles - INFO - Starting script: Add_Permissions_to_Roles
+2026-11-20 11:34:32,731 - Add_Permissions_to_Roles - INFO - Command: /Applications/KiroCrew.app/Contents/Resources/backend-dist/kirocrew-backend-arm64/bin/python /Users/alice.weaver/.kiro/crew/workspace-member-mate/worktrees/mate/Script-Development-b8e43f07-4afe964f/src/Add_Permissions_to_Roles.py
+2026-11-20 11:34:32,731 - Add_Permissions_to_Roles - INFO - Script finished with code 0
+2026-11-20 11:34:32,731 - Add_Permissions_to_Roles - INFO - Elapsed time: 0.00 seconds
+2026-11-20 11:34:32,731 - Add_Permissions_to_Roles - DEBUG - STDOUT:
+Mock output
+2026-11-20 11:34:32,732 - Add_Permissions_to_Roles - INFO - Starting script: Add_Permissions_to_Roles
+2026-11-20 11:34:32,732 - Add_Permissions_to_Roles - INFO - Starting script: Add_Permissions_to_Roles
+2026-11-20 11:34:32,732 - Add_Permissions_to_Roles - INFO - Command: /Applications/KiroCrew.app/Contents/Resources/backend-dist/kirocrew-backend-arm64/bin/python /Users/alice.weaver/.kiro/crew/workspace-member-mate/worktrees/mate/Script-Development-b8e43f07-4afe964f/src/Add_Permissions_to_Roles.py
+2026-11-20 11:34:32,732 - Add_Permissions_to_Roles - INFO - Command: /Applications/KiroCrew.app/Contents/Resources/backend-dist/kirocrew-backend-arm64/bin/python /Users/alice.weaver/.kiro/crew/workspace-member-mate/worktrees/mate/Script-Development-b8e43f07-4afe964f/src/Add_Permissions_to_Roles.py
+2026-11-20 11:34:32,732 - Add_Permissions_to_Roles - ERROR - Script timed out after 10 seconds. Check if the script is waiting for input or stuck in a loop.
+2026-11-20 11:34:32,732 - Add_Permissions_to_Roles - ERROR - Script timed out after 10 seconds. Check if the script is waiting for input or stuck in a loop.
+2026-11-20 11:43:33,681 - Add_Permissions_to_Roles - INFO - Starting script: Add_Permissions_to_Roles
+2026-11-20 11:43:33,683 - Add_Permissions_to_Roles - INFO - Command: /Applications/KiroCrew.app/Contents/Resources/backend-dist/kirocrew-backend-arm64/bin/python src/Add_Permissions_to_Roles.py
+2026-11-20 11:43:33,700 - Add_Permissions_to_Roles - INFO - Script finished with code 1
+2026-11-20 11:43:33,700 - Add_Permissions_to_Roles - INFO - Elapsed time: 0.02 seconds
+2026-11-20 11:43:33,700 - Add_Permissions_to_Roles - WARNING - STDERR:
+Traceback (most recent call last):
+  File "/Users/alice.weaver/.kiro/crew/workspace-member-mate/worktrees/mate/Script-Development-b8e43f07-4afe964f/src/Add_Permissions_to_Roles.py", line 46, in <module>
+    import PureCloudPlatformClientV2
+ModuleNotFoundError: No module named 'PureCloudPlatformClientV2'
+
+2026-11-20 11:44:24,892 - Add_Permissions_to_Roles - INFO - Starting script: Add_Permissions_to_Roles
+2026-11-20 11:44:24,892 - Add_Permissions_to_Roles - INFO - Command: /Applications/KiroCrew.app/Contents/Resources/backend-dist/kirocrew-backend-arm64/bin/python /Users/alice.weaver/.kiro/crew/workspace-member-mate/worktrees/mate/Script-Development-b8e43f07-4afe964f/src/Add_Permissions_to_Roles.py
+2026-11-20 11:44:24,892 - Add_Permissions_to_Roles - INFO - Script finished with code 0
+2026-11-20 11:44:24,892 - Add_Permissions_to_Roles - INFO - Elapsed time: 0.00 seconds
+2026-11-20 11:44:24,892 - Add_Permissions_to_Roles - DEBUG - STDOUT:
+Mock output
+2026-11-20 11:44:24,892 - Add_Permissions_to_Roles - INFO - Starting script: Add_Permissions_to_Roles
+2026-11-20 11:44:24,892 - Add_Permissions_to_Roles - INFO - Starting script: Add_Permissions_to_Roles
+2026-11-20 11:44:24,892 - Add_Permissions_to_Roles - INFO - Command: /Applications/KiroCrew.app/Contents/Resources/backend-dist/kirocrew-backend-arm64/bin/python /Users/alice.weaver/.kiro/crew/workspace-member-mate/worktrees/mate/Script-Development-b8e43f07-4afe964f/src/Add_Permissions_to_Roles.py
+2026-11-20 11:44:24,892 - Add_Permissions_to_Roles - INFO - Command: /Applications/KiroCrew.app/Contents/Resources/backend-dist/kirocrew-backend-arm64/bin/python /Users/alice.weaver/.kiro/crew/workspace-member-mate/worktrees/mate/Script-Development-b8e43f07-4afe964f/src/Add_Permissions_to_Roles.py
+2026-11-20 11:44:24,892 - Add_Permissions_to_Roles - ERROR - Script timed out after 10 seconds. Check if the script is waiting for input or stuck in a loop.
+2026-11-20 11:44:24,892 - Add_Permissions_to_Roles - ERROR - Script timed out after 10 seconds. Check if the script is waiting for input or stuck in a loop.

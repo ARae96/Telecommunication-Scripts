@@ -1,0 +1,27 @@
+2026-11-20 11:48:48,825 - SlackIntegration - INFO - Sending message to default
+2026-11-20 11:48:48,825 - SlackIntegration - DEBUG - Message: Available scripts:
+
+1. **Access_Most_Like** - (no description)
+2. **Add_Permissions_to_Roles** - (no description)
+3. **BU_Forecast_Backup** - (no description)
+4. **BU_Schedule_Backup** - (no description)
+5. **Combine_User_Permissions** - (no description)
+6. **Compare_Roles** - (no description)
+7. **Global_User_Info_Search** - (no description)
+8. **Merge_Roles** - (no description)
+9. **Online_Adherence_Datebricks** - (no description)
+10. **Permission_Comparison** - (no description)
+11. **Queue_Members_To_Group** - (no description)
+12. **Role_Migration** - (no description)
+13. **Role_Removal** - (no description)
+14. **SD_Active_Stats_v2** - (no description)
+15. **Service_Ops_Flow_Updater** - (no description)
+16. **Service_Ops_Holiday_Updater** - (no description)
+17. **UserID_to_Name** - (no description)
+18. **confirm_prompt** - (no description)
+19. **genesys_common** - (no description)
+
+Run a script with: `run Script_Name`
+Get details with: `info Script_Name`
+2026-11-20 11:48:48,825 - SlackIntegration - DEBUG - Metadata: {'command': 'list', 'user_id': 'test_user'}
+2026-11-20 11:48:48,825 - SlackIntegration - INFO - Message sent successfully

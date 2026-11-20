@@ -53,10 +53,9 @@ from genesys_common import (
 #   https://apps.mypurecloud.com/directory/#/admin/people-permissions/roles/888af629-4949-44b8-9ee1-082217284110
 # A bare role ID works too. The base role is the one we compare against. The
 # compared roles are the ones checked against it.
-BASE_ROLE_LINK = 'https://apps.mypurecloud.com/directory/#/admin/people-permissions/roles/888af629-4949-44b8-9ee1-082217284110'
+BASE_ROLE_LINK = ''
 ROLE_LINKS_TO_COMPARE = [
-    'https://apps.mypurecloud.com/directory/#/admin/people-permissions/roles/35698114-d1b8-4fd4-b0ba-0eb7657a642b',
-    'https://apps.mypurecloud.com/directory/#/admin/people-permissions/roles/25e1a293-aaa0-4fdd-a15a-90955dc7fb13'
+    ''
 ]
 
 # The CSV is written in the same folder as this script.
