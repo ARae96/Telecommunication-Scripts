@@ -62,8 +62,12 @@ bot/
 
 ## How Scripts Are Discovered
 
-The bot looks for `.py` files in the `src/` directory:
+The bot looks for `.py` files in the `Sandbox/` and `Validated/` directories:
 
+- **Script locations:** Scripts can be in:
+  - `Sandbox/<YourName>/` (personal scripts)
+  - `Sandbox/Shared Scripts/` (team scripts)
+  - `Validated/` (approved scripts)
 - **Script name:** Filename stem (e.g., `Add_Permissions_to_Roles.py` → `Add_Permissions_to_Roles`)
 - **Description:** First line of the module docstring (the first `"""..."""` at the top of the file)
 - **Metadata:** File size, creation date, last modified date
